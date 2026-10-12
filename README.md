@@ -1,73 +1,28 @@
-# Project Template
+# deep_tunnelling
 
-View the `phonon_lifetime` package documentation [here](https://matt-ord.github.io/phonon_lifetime/).
+Hop rates of H and D on Ni(111) from the universal Caldeira-Leggett master
+equation (UME), compared with the HeSE measurements of J. Zhu (PhD thesis,
+Cambridge, 2015).
 
-## Setup
+- `deep_tunnelling/potential.py`: periodic PES fitted to six-site DFT data.
+- `deep_tunnelling/bloch.py`: Bloch eigenstates on an n x n supercell.
+- `deep_tunnelling/bath.py`: Ohmic bath with the cutoff-free Lamb shift.
+- `deep_tunnelling/ume.py`: periodic Caldeira-Leggett couplings and the UME Liouvillian.
+- `deep_tunnelling/model.py`: escape-rate curves for sets of temperatures and frictions.
 
-This project uses a **Dev Container** (via **VS Code**) and **[`uv`](https://github.com/astral-sh/uv)** for fast, reliable Python dependency management.
-
-### Launch the Dev Container
-
-1. Clone the project in VS Code.
-
-2. In VS Code, open the Command Palette (`Ctrl+Shift+P`) and run:
-
-   ```
-   Dev Containers: Reopen in Container
-   ```
-
-   This will build the container if needed and connect you to the development environment.
-
-### Setting up the Template
-
-To setup the template
-
-- Re-name the `my_project` folder to `your_project_name`
-- Update references in `pyproject.toml`, including the project name, description, and python.analysis.include
-- Update path of imports in `tests/import_test.py` and `examples/example.py`
-- Update details in `docs/source/conf.py`
-- Update details in `docs/source/index.rst`
-- Update the GitHub workflow step to `Build Sphinx documentation` in `.github/workflows/deploy.yml`, and the link to docs in `README.md`
-- Update python.analysis.include in `.devcontainer/devcontainer.json`
-
-### Dependency Management
-
-This project uses **[`uv`](https://github.com/astral-sh/uv)** for dependency management.
-To add a package, use the following commands:
+## Examples
 
 ```bash
-uv add <package-name>
-uv add --dev <package-name>
+uv run python examples/hydrogen.py     # fit the friction to the H data
+uv run python examples/deuterium.py    # D with the same friction coefficient
+uv run python examples/convergence.py  # convergence in supercell size
 ```
 
-This adds the package to `pyproject.toml` and updates the lockfile,
-where `--dev` adds it to the development dependencies. To install
-these dependencies, use:
+Results are cached in `examples/data/` and figures written to `examples/*.pdf`.
+
+## Development
 
 ```bash
-# All dependencies
 uv sync --all-extras
-# Exclude dev dependencies
-uv sync
+ruff check . && ty check . && pytest
 ```
-
-### Spell checker, Linter, Type Checker and Test Runner
-
-This project sets up tools for spell checking, linting, type checking, and testing,
-which are automatically run in Github Actions on push and pull requests.
-To run these tools locally, use the following commands:
-
-```bash
-# Linting and formatting
-ruff check .
-# Type checking
-ty check .
-# Testing
-pytest
-# Spell checking
-cspell .
-```
-
-To add words to the spell checker's dictionary,
-add them to the `.vscode/cspell.json` file under
-the `words` or `ignoreWords` section.

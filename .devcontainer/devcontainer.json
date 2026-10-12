@@ -32,7 +32,7 @@
 				"python.testing.pytestEnabled": true,
 				"python.analysis.diagnosticMode": "workspace",
 				"python.analysis.include": [
-					"my_project"
+					"deep_tunnelling"
 				],
 				"python.analysis.autoImportCompletions": true,
 				"ty.diagnosticMode": "workspace"
