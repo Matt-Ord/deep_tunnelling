@@ -5,10 +5,6 @@
     "words": [
         "Caldeira",
         "CASTEP",
-        "Diagonalise",
-        "diagonalised",
-        "diagonalising",
-        "Digitised",
         "eigenbasis",
         "eigenstate",
         "eigenstates",
@@ -17,16 +13,9 @@
         "Lanczos",
         "Lindblad",
         "Liouvillian",
-        "minimising",
-        "neighbour",
-        "neighbours",
-        "normalised",
         "PCCP",
-        "polarised",
-        "regularised",
         "Rudner",
-        "TDDFT",
-        "vectorisation"
+        "TDDFT"
     ],
     "ignoreWords": [
         "axhspan",

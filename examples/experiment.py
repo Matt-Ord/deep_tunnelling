@@ -1,6 +1,6 @@
 """HeSE hop rates of H and D on Ni(111), J. Zhu PhD thesis (Cambridge, 2015).
 
-Digitised from Fig. 4.21 (0.07 ML). The rate is the 'slow' rate, i.e. the total
+Digitized from Fig. 4.21 (0.07 ML). The rate is the 'slow' rate, i.e. the total
 escape rate out of the lower-energy (fcc) hollow, in ps^-1, with the +-1 sigma
 range. Repeated temperatures are separate measurements.
 """

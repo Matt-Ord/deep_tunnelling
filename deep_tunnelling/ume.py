@@ -66,7 +66,7 @@ class BandData:
 
     @classmethod
     def build(cls, solver: BlochSolver, n: int) -> BandData:
-        """Diagonalise every k point of the n x n grid and build all coupling channels."""
+        """Diagonalize every k point of the n x n grid and build all coupling channels."""
         kpoints = k_grid(n)
         states = [
             solver.eigenstates(k)[1].reshape(solver.n_states, -1) for k in kpoints

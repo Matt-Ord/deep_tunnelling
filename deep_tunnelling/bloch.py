@@ -7,9 +7,9 @@ vanish there). For crystal momentum k the periodic part u_k of the Bloch state
 satisfies [hbar^2 (-i grad + k)^2 / 2m + V] u_k = E u_k.
 
 The fast z vibrations are removed first: the 1D problem T_z + V(fcc, z) is
-diagonalised once and z is contracted onto its lowest n_z states (6 reproduce
+diagonalized once and z is contracted onto its lowest n_z states (6 reproduce
 the full grid to ~1e-3 meV). The in-plane kinetic energy is applied with FFTs
-and the n1 x n2 x n_z Hamiltonian is diagonalised with Lanczos.
+and the n1 x n2 x n_z Hamiltonian is diagonalized with Lanczos.
 
 An n x n supercell with periodic boundary conditions is equivalent to the
 n x n Monkhorst-Pack grid k = (i b1 + j b2) / n, i, j = 0..n-1.
@@ -87,7 +87,7 @@ class Grid:
 
 @dataclass
 class BlochSolver:
-    """Diagonalise the Bloch Hamiltonian at arbitrary k, caching results."""
+    """Diagonalize the Bloch Hamiltonian at arbitrary k, caching results."""
 
     potential: SurfacePotential
     mass: float
@@ -108,7 +108,7 @@ class BlochSolver:
         gx, gy, gz = self.grid.g_vectors()
         self._g_xy = (gx[:, :, 0], gy[:, :, 0])
         gz = gz[0, 0]
-        # pre-diagonalise H_z = T_z + V(fcc, z) and project V(x, y, z) onto its lowest states
+        # pre-diagonalize H_z = T_z + V(fcc, z) and project V(x, y, z) onto its lowest states
         nz = self.grid.nz
         kinetic = np.fft.ifft(
             HBAR**2
@@ -148,15 +148,18 @@ class BlochSolver:
             matvec=matvec,  # ty: ignore[unknown-argument]
             dtype=np.complex128,  # ty: ignore[parameter-already-assigned]
         )
-        v0 = np.zeros(shape, dtype=np.complex128)
-        v0[:, :, 0] = 1.0
+        # a generic start vector: a uniform one is invariant under the little
+        # group of k, so in exact arithmetic Lanczos would only find totally
+        # symmetric states at high-symmetry k (it works only through round-off)
+        rng = np.random.default_rng(0)
+        v0 = rng.standard_normal(size) + 1j * rng.standard_normal(size)
         energies, vectors = scipy.sparse.linalg.eigsh(
             op,
             k=self.n_states,
             which="SA",
             tol=1e-10,
             ncv=max(3 * self.n_states, 60),
-            v0=v0.ravel(),
+            v0=v0,
         )
         order = np.argsort(energies)
         coeffs = vectors[:, order].T.reshape(self.n_states, *shape)
@@ -165,7 +168,7 @@ class BlochSolver:
     def eigenstates(
         self, k: KPoint
     ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-        """Return (energies (meV), u_k on the grid normalised to sum |u|^2 = 1)."""
+        """Return (energies (meV), u_k on the grid normalized to sum |u|^2 = 1)."""
         k = (Fraction(k[0]) % 1, Fraction(k[1]) % 1)
         if k in self._cache:
             return self._cache[k]

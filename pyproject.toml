@@ -1,7 +1,7 @@
 [project]
 name = "deep_tunnelling"
 version = "0.0.1"
-description = "Deep tunnelling of H on Ni(111) via a universal master equation"
+description = "Deep tunneling of H on Ni(111) via a universal master equation"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [

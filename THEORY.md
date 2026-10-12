@@ -40,7 +40,7 @@ $\hbar = 0.6582$ meV ps and $\hbar^2/2m_\mathrm{H} = 2.074$ meV Å².
 ### 1.1 DFT data
 
 The PES is built from DFT total energies of a single H atom on a Ni(111) slab
-(M. Sacchi; CASTEP, spin-polarised PBE, 2×2 cell, 5 layers), the same data
+(M. Sacchi; CASTEP, spin-polarized PBE, 2×2 cell, 5 layers), the same data
 behind the band structure of [JZ] §4.5.1 (p. 68). The energies (`examples/raw_data.json`)
 are sampled at the six symmetry-distinct points of the irreducible triangle:
 top, fcc, hcp, bridge and the top–fcc and top–hcp midpoints, each at nine heights
@@ -92,7 +92,7 @@ hcp–fcc ground-state splitting 12.9 meV (12.7), parallel vibration 84.2 meV (8
 perpendicular 115.0 meV (117.4), and ground-band width $4\times10^{-4}$ meV
 ($5\times10^{-4}$). Only the zero-point energy differs by a constant ~10 meV.
 
-The symmetric variant fits the deep-tunnelling plateau far better (§7). It conflicts
+The symmetric variant fits the deep-tunneling plateau far better (§7). It conflicts
 with the 19 meV fcc–hcp difference that [JZ] extracts from the fast/slow rate ratio
 (§4.4.2, p. 62), which is why both variants are kept.
 
@@ -119,7 +119,7 @@ $z$ direction is periodic over the 2.2 Å range of the data; the potential excee
 
 ### 2.2 Contracted z basis
 
-The fast $z$ vibrations are removed before diagonalising. The 1D problem
+The fast $z$ vibrations are removed before diagonalizing. The 1D problem
 $T_z + V(\mathrm{fcc}, z)$ is solved once on 28 points and $z$ is projected onto its
 lowest $n_z = 6$ states $\phi_i(z)$. The 3D Hamiltonian then acts on
 $18\times18\times6$ coefficients:
@@ -133,7 +133,7 @@ Lanczos (`eigsh`). Six $z$ states reproduce the full-grid energies to ~$10^{-3}$
 
 ### 2.3 Time reversal
 
-Only about half the k points are diagonalised. Time reversal gives
+Only about half the k points are diagonalized. Time reversal gives
 $\psi_{-\mathbf k} = \psi_\mathbf k^*$; because states are stored at $\mathbf k$ reduced into
 $[0,1)^2$, the periodic part picks up a reciprocal-lattice phase,
 
@@ -214,8 +214,16 @@ $$
 
 The result is completely positive and trace preserving, and the transition rates
 between eigenstates of $H_s$ equal the Fermi golden-rule (Bloch–Redfield) rates.
-It is valid when the bath correlation time $\hbar/k_BT$ is short compared with
-$1/\gamma$, with no condition on the level spacing of $H_s$. This matters for H, where
+It needs the bath correlation time $\hbar/k_BT$ to be short compared with every
+system rate the bath generates, with no condition on the level spacing of $H_s$.
+For hopping, the fastest of these is not γ. It is the dephasing of a superposition
+of two neighboring hollows a distance $d = a/\sqrt3 = 1.44$ Å apart,
+$\Gamma_\phi = \eta d^2 k_BT/\hbar^2$, which is $\approx 5\gamma$ at 120 K for H. The condition
+$\Gamma_\phi \ll k_BT/\hbar$ is therefore $\eta d^2/\hbar = 2\pi\alpha \ll 1$, independent of
+temperature, where α is the spin–boson coupling. For H, $2\pi\alpha \approx 0.33\,\gamma$/ps⁻¹,
+which is 0.33 at the symmetric-PES fit and 0.76 at the raw-PES fit (§7.3). Both values
+are marginal. [UME] §7.3 already finds a 20% spread between second-order master
+equations at $\alpha \approx 0.02$. This matters for H, where
 $\hbar\omega/k_BT \approx 4$–8 and the standard high-temperature correction (L =
 x + iħp/4mk_BT) fails ([MO] §7.11, Table 7.4).
 
@@ -254,8 +262,11 @@ through two terms, both of which drop out:
    with $\kappa = \eta\omega_c$ exactly ([MO] Eq. 7.77). This is why the UME is
    well defined for an Ohmic bath ([MO] Eq. 7.78 and the text after it).
 2. **A term linear in ν**, $\propto \nu\ln\omega_c$, which multiplies the double
-   commutator $[A^\dagger,[H_s,A]]$. For both $A = z$ and $A = e^{i\mathbf q\cdot\mathbf r}/q$ this is
-   the c-number $-\hbar^2/m$, so it only shifts all energies equally.
+   commutator, $2A^\dagger H_sA - \{A^\dagger A, H_s\}$. For $A = z$ this is the c-number
+   $\hbar^2/m$. For a single $A = e^{i\mathbf q\cdot\mathbf r}/q$ it is
+   $(\hbar^2/m)(1 + 2\mathbf q\cdot\hat{\mathbf p}/\hbar q^2)$, which is *not* a c-number. The
+   momentum term cancels only between the $+\mathbf q$ and $-\mathbf q$ channels, which carry
+   equal weight. The sum then only shifts all energies equally.
 
 What remains is cutoff-free. Writing $\coth$ as a Matsubara sum and removing the two
 terms above gives the closed form used in `OhmicBath.principal_value`:
@@ -308,7 +319,7 @@ neglected; they are thermally negligible below the barrier.
 Each coupling shifts $\mathbf k$ by $\pm\mathbf q_j$ (or 0 for $z$), so the dissipator maps a
 density matrix that is diagonal in $\mathbf k$, $\rho = \oplus_\mathbf k\rho_\mathbf k$, to another
 one. The steady state and fcc ↔ hcp population exchange live entirely in this
-sector, of dimension $n^2 N^2$ rather than $(n^2N)^2$. In row-major vectorisation
+sector, of dimension $n^2 N^2$ rather than $(n^2N)^2$. In row-major vectorization
 ($\mathrm{vec}(A\rho B) = (A\otimes B^{\mathsf T})\,\mathrm{vec}\,\rho$) the blocks are
 
 $$
@@ -348,7 +359,7 @@ k_\mathrm{slow} = k_{\mathrm f\to\mathrm h} = -\lambda_1(1 - p_\mathrm f), \qqua
 k_\mathrm{fast} = k_{\mathrm h\to\mathrm f} = -\lambda_1\,p_\mathrm f .
 $$
 
-These are total escape rates out of a site, summed over its three neighbours. That
+These are total escape rates out of a site, summed over its three neighbors. That
 is the quantity [JZ] plots: his "rate" is the slow rate $\nu/\lambda$ of the two-sublattice
 jump model ([JZ] Eqs. 2.34–2.44, pp. 16–18). For degenerate hollows $p_\mathrm f = \tfrac12$
 and the two rates are equal.
@@ -377,13 +388,18 @@ This is not yet implemented.
 
 ### 6.3 The two regimes
 
-* **Deep tunnelling** (below ~160 K). Only the fcc and hcp ground bands are occupied.
+* **Deep tunneling** (below ~160 K). Only the fcc and hcp ground bands are occupied.
   For degenerate hollows the ground states tunnel with matrix element $t$ (the ground
   band has width ~$6t$; $t \approx 0.03$ meV for H), and bath dephasing $\Gamma_\phi \propto \gamma T$
   turns this into incoherent hopping at a rate $\sim t^2/\hbar^2\Gamma_\phi$ ([UME] Eq. 11). The
-  rate is therefore $\propto t^2/\gamma$ and rises slowly on cooling. With a bias ε
-  (raw PES), hopping uphill needs a bath quantum of energy ε, and the rate falls as
-  $e^{-\varepsilon/k_BT}$.
+  rate is therefore $\propto t^2/\gamma$ and rises slowly on cooling. With a bias
+  $\varepsilon \gg t$ (raw PES, ε ≈ 13 meV), the eigenstates localize and a hop is a one-boson
+  transition with matrix element $\approx t d/\varepsilon$. Downhill this gives
+  $\sim 2\eta d^2t^2/\hbar^2\varepsilon$, and uphill an extra $e^{-\varepsilon/k_BT}$. Relative to the
+  degenerate rate this is a factor $\sim(2\pi\alpha)^2 k_BT/\varepsilon \approx 0.1$ (at γ = 1 ps⁻¹,
+  120 K), larger than the Boltzmann factor ($\approx 0.3$). The off-resonance suppression
+  therefore dominates. The biased rate grows as $\gamma$ rather than $1/\gamma$, which is part
+  of why the raw-PES fit needs a larger γ.
 * **Activated** (above ~160 K). The bath excites the parallel vibration, whose band is
   wide enough to tunnel between sites before it relaxes. The activation energy is set
   by the hopping band, not by the classical barrier ([UME] §4), and the rate rises
@@ -395,7 +411,7 @@ This is not yet implemented.
 
 ### 7.1 Data
 
-The measured rates (`examples/experiment.py`) are digitised from [JZ] Fig. 4.21
+The measured rates (`examples/experiment.py`) are digitized from [JZ] Fig. 4.21
 (p. 64): HeSE at 0.07 ML, measured at ΔK = 0.8 Å⁻¹ along [11̄2] and rescaled to the
 mid-ΔK plateau ([JZ] p. 63). They are slow rates. The fast rate is shown as
 $k_\mathrm{slow}\,e^{\Delta E/k_BT}$, using the fast/slow ratio $\lambda = e^{\Delta E/k_BT}$ with
@@ -405,7 +421,7 @@ $E_a = 97.7$ meV above 165 K, and the low-temperature plateau is
 
 ### 7.2 Fitting
 
-For H, γ is the only free parameter. It is fitted by minimising
+For H, γ is the only free parameter. It is fitted by minimizing
 
 $$
 \chi^2 = \frac{1}{N}\sum_i \left(\frac{\ln k_\mathrm{model}(T_i) - \ln k_i}{\sigma_i}\right)^2,
@@ -432,9 +448,9 @@ At $n = 6$ (§8):
   hopping. Slow and fast rates are equal, so the measured fast/slow ratio is not
   reproduced. D has no plateau and falls ~10× below the data at low T.
 * **Raw PES.** The activated regime of both H and D, including the fast rate, matches
-  well, but the bias suppresses deep tunnelling, so neither isotope has a plateau.
+  well, but the bias suppresses deep tunneling, so neither isotope has a plateau.
 
-Neither PES reproduces the deep-tunnelling rate of D, whose weak isotope effect
+Neither PES reproduces the deep-tunneling rate of D, whose weak isotope effect
 (H/D ≈ 2) [PT] describes as an open problem (pp. 270–271).
 
 ---
@@ -449,6 +465,6 @@ Neither PES reproduces the deep-tunnelling rate of D, whose weak isotope effect
 | Master-equation bands | below 150 meV (11 H, 17 D) | `model.ENERGY_WINDOW` | 16 → 20 bands: 4% (D, 230 K) |
 | Supercell | n = 6 | examples | within 2% of n = 10 (`examples/convergence.py`) |
 
-Convergence in $n$ is slowest at low temperature, where the deep-tunnelling rate is
+Convergence in $n$ is slowest at low temperature, where the deep-tunneling rate is
 sensitive to how closely the periodic coupling approaches linear coupling ($q\,\Delta x \ll 1$).
 At 250 K the rate is converged already at $n = 2$.

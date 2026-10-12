@@ -5,7 +5,7 @@ S(w) = 2 hbar J(w) / (1 - exp(-hbar w / kT))
 Gamma(nu) = S(nu) / 2 + i P(nu)
 
 The principal value P(nu) = (1 / 2 pi) P int S(w) / (nu - w) dw diverges for an
-Ohmic bath, but only through (i) a constant, cancelled exactly by the
+Ohmic bath, but only through (i) a constant, canceled exactly by the
 Caldeira-Leggett counterterm (thesis Eq. 7.77), and (ii) a term linear in nu,
 which multiplies the double commutator [A^dag, [H_s, A]] = -hbar^2 / m, a
 c-number for both the linear and the periodic couplings. Dropping both (thesis
@@ -69,6 +69,6 @@ class OhmicBath:
         )
 
     def gamma_function(self, nu: Array) -> Array:
-        """Gamma(nu) = int_0^inf D(tau) e^{i nu tau} dtau, regularised as above."""
+        """Gamma(nu) = int_0^inf D(tau) e^{i nu tau} dtau, regularized as above."""
         nu = np.asarray(nu, dtype=float)
         return 0.5 * self.s(nu) + 1j * self.principal_value(nu)
