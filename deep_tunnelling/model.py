@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from functools import partial
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from threadpoolctl import threadpool_limits
 
 from deep_tunnelling.ume import BandData, hop_rates
+
+if TYPE_CHECKING:
+    from deep_tunnelling.ume import RateResult
 
 Array = np.ndarray[Any, Any]
 
@@ -40,14 +46,27 @@ def n_rate_for(bands: BandData, window: float = ENERGY_WINDOW) -> int:
     return int(np.sum(mean - mean[0] < window))
 
 
+def _single_threaded_hop_rates(
+    bands: BandData, mass: float, gammas: list[float], n_rate: int, temperature: float
+) -> list[RateResult]:
+    # one BLAS thread per process, so parallel temperatures do not oversubscribe the cores
+    with threadpool_limits(limits=1, user_api="blas"):
+        return hop_rates(bands, mass, temperature, gammas, n_rate)
+
+
 def rates(
     bands: BandData, mass: float, temperatures: Array, gammas: list[float]
 ) -> list[RateCurve]:
     """Escape-rate curves, one per friction. Slow and fast are equal for degenerate hollows."""
     n_rate = n_rate_for(bands)
-    results = [
-        hop_rates(bands, mass, t, gammas, n_rate) for t in temperatures
-    ]  # (T, gamma)
+    # one process per temperature
+    with ProcessPoolExecutor() as pool:
+        results = list(
+            pool.map(
+                partial(_single_threaded_hop_rates, bands, mass, gammas, n_rate),
+                temperatures,
+            )
+        )  # (T, gamma)
     return [
         RateCurve(
             mass=mass,
