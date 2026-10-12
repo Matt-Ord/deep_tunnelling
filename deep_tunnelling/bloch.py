@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import scipy.sparse.linalg
+from threadpoolctl import threadpool_limits
 
 from deep_tunnelling.units import A_NI, HBAR
 
@@ -153,14 +154,16 @@ class BlochSolver:
         # symmetric states at high-symmetry k (it works only through round-off)
         rng = np.random.default_rng(0)
         v0 = rng.standard_normal(size) + 1j * rng.standard_normal(size)
-        energies, vectors = scipy.sparse.linalg.eigsh(
-            op,
-            k=self.n_states,
-            which="SA",
-            tol=1e-10,
-            ncv=max(3 * self.n_states, 60),
-            v0=v0,
-        )
+        # ARPACK makes many small BLAS calls, which run ~10x slower multithreaded
+        with threadpool_limits(limits=1, user_api="blas"):
+            energies, vectors = scipy.sparse.linalg.eigsh(
+                op,
+                k=self.n_states,
+                which="SA",
+                tol=1e-10,
+                ncv=max(3 * self.n_states, 60),
+                v0=v0,
+            )
         order = np.argsort(energies)
         coeffs = vectors[:, order].T.reshape(self.n_states, *shape)
         return energies[order], np.einsum("sxyi,zi->sxyz", coeffs, self._phi)
