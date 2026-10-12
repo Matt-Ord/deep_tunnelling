@@ -37,7 +37,7 @@ import scipy.sparse
 import scipy.sparse.linalg
 
 from deep_tunnelling.bath import OhmicBath
-from deep_tunnelling.bloch import BlochSolver, k_grid
+from deep_tunnelling.bloch import BlochSolver, Grid, KPoint, k_grid
 from deep_tunnelling.units import HBAR
 
 Array = np.ndarray[Any, Any]
@@ -66,34 +66,47 @@ class BandData:
 
     @classmethod
     def build(cls, solver: BlochSolver, n: int) -> BandData:
-        grid = solver.grid
+        """Diagonalise every k point of the n x n grid and build all coupling channels."""
         kpoints = k_grid(n)
-        index = {k: i for i, k in enumerate(kpoints)}
-        states = [solver.eigenstates(k) for k in kpoints]
-        energies = np.array([e for e, _ in states])
-        u, v, z = grid.fractional()
-        fcc_mask = _fcc_mask(u, v)
-        b = grid.reciprocal
-        q_length = float(np.linalg.norm(b[0])) / n
-        channels: list[Channel] = []
-        projectors = []
-        for i, k in enumerate(kpoints):
-            uk = states[i][1].reshape(solver.n_states, -1)
-            projectors.append((uk.conj() * fcc_mask.ravel()) @ uk.T)
-            for d in DIRECTIONS:
-                kq = (k[0] + Fraction(d[0], n), k[1] + Fraction(d[1], n))
-                wrapped = (kq[0] % 1, kq[1] % 1)
-                g = (int(kq[0] - wrapped[0]), int(kq[1] - wrapped[1]))
-                j = index[wrapped]
-                ukq = states[j][1].reshape(solver.n_states, -1)
-                phase = np.exp(2j * np.pi * (g[0] * u + g[1] * v)).ravel()
-                m = (ukq.conj() * phase) @ uk.T / q_length  # <k+q| e^{iqr} |k> / q
-                # e^{+iqr}: k -> k+q ; e^{-iqr}: k+q -> k with matrix m^dag
-                channels.extend(
-                    (Channel(i, j, m, 1 / 3), Channel(j, i, m.conj().T, 1 / 3))
-                )
-            channels.append(Channel(i, i, (uk.conj() * z.ravel()) @ uk.T, 1.0))
+        states = [
+            solver.eigenstates(k)[1].reshape(solver.n_states, -1) for k in kpoints
+        ]
+        u, v, z = solver.grid.fractional()
+        fcc_mask = _fcc_mask(u, v).ravel()
+        projectors = [(uk.conj() * fcc_mask) @ uk.T for uk in states]
+        channels = [
+            *_momentum_channels(solver.grid, kpoints, states, n),
+            *(
+                Channel(i, i, (uk.conj() * z.ravel()) @ uk.T, 1.0)
+                for i, uk in enumerate(states)
+            ),
+        ]
+        energies = np.array([solver.eigenstates(k)[0] for k in kpoints])
         return cls(energies, np.array(projectors), channels)
+
+
+def _momentum_channels(
+    grid: Grid, kpoints: list[KPoint], states: list[Array], n: int
+) -> list[Channel]:
+    """Channels e^{+-i q.r} / q, weight 1/3 each, for the three directions q = d . b / n."""
+    index = {k: i for i, k in enumerate(kpoints)}
+    u, v, _ = grid.fractional()
+    q_length = float(np.linalg.norm(grid.reciprocal[0])) / n
+    channels = []
+    for i, k in enumerate(kpoints):
+        for d in DIRECTIONS:
+            kq = (k[0] + Fraction(d[0], n), k[1] + Fraction(d[1], n))
+            wrapped = (kq[0] % 1, kq[1] % 1)
+            g = (int(kq[0] - wrapped[0]), int(kq[1] - wrapped[1]))
+            j = index[wrapped]
+            # a stored state at k + q - G has periodic part e^{-iG.r} u_{k+q}
+            phase = np.exp(2j * np.pi * (g[0] * u + g[1] * v)).ravel()
+            m = (
+                (states[j].conj() * phase) @ states[i].T / q_length
+            )  # <k+q| e^{iqr} |k> / q
+            # e^{+iqr}: k -> k+q ; e^{-iqr}: k+q -> k with matrix m^dag
+            channels.extend((Channel(i, j, m, 1 / 3), Channel(j, i, m.conj().T, 1 / 3)))
+    return channels
 
 
 def _fcc_mask(u: Array, v: Array) -> Array:
@@ -121,6 +134,7 @@ class RateResult:
 
     @property
     def lambda1(self) -> complex:
+        """Slowest decay eigenvalue (ps^-1)."""
         return complex(self.eigenvalues[1])
 
     @property

@@ -1,0 +1,454 @@
+# Theory
+
+This package computes hop rates of H and D on Ni(111) from a Markovian open-system
+master equation, the *universal* Caldeira–Leggett master equation (UME), evaluated
+in the Bloch eigenbasis of a three-dimensional periodic potential energy surface,
+and compares them with helium spin-echo (HeSE) measurements.
+
+The pipeline is
+
+```
+DFT site energies ──► periodic 3D PES ──► Bloch states on an n×n k grid
+   (potential.py)         (potential.py)          (bloch.py)
+                                                      │
+          periodic Caldeira–Leggett couplings ◄───────┘
+          + universal temperature correction           (ume.py, bath.py)
+                          │
+          Liouvillian in the translation-invariant sector
+                          │
+          slowest decay rate ──► fcc / hcp escape rates   (ume.py, model.py)
+```
+
+References to the documents in `resources/` use these short names:
+
+| Short name | File | Content |
+|---|---|---|
+| **[MO]** | `thesis.pdf` | M. Ord, *Quantum Simulations of Adsorbate Dynamics*, PhD thesis (Cambridge, 2026). PDF page = printed page. |
+| **[UME]** | `Universal_Master_Equation_DoubleWell_Hopping (1).pdf` | Note: hopping rates in a double well from the spectrum of the universal Caldeira–Leggett master equation. |
+| **[NR]** | `Nathan_2020.pdf` | F. Nathan and M. S. Rudner, *Universal Lindblad equation for open quantum systems*, PRB **102**, 115109 (2020). |
+| **[JZ]** | `2015 - Jianding Zhu.pdf` | J. Zhu, *Study of quantum effects in adsorbate diffusion*, PhD thesis (Cambridge, 2015). Page numbers below are printed pages (PDF page = printed + 14). |
+| **[PT]** | `2018 - Peter Townsend.pdf` | P. Townsend, *Diffusion of light adsorbates on transition metal surfaces*, PhD thesis (Cambridge, 2018). |
+| **[OP]** | `Ord_2026.pdf` | M. Ord *et al.*, *Quantum simulations of the ballistic motion of a surface adsorbate*, PCCP **28**, 17708 (2026). |
+
+Units throughout are meV, ps and Å (`deep_tunnelling/units.py`), so
+$\hbar = 0.6582$ meV ps and $\hbar^2/2m_\mathrm{H} = 2.074$ meV Å².
+
+---
+
+## 1. Potential energy surface (`potential.py`)
+
+### 1.1 DFT data
+
+The PES is built from DFT total energies of a single H atom on a Ni(111) slab
+(M. Sacchi; CASTEP, spin-polarised PBE, 2×2 cell, 5 layers), the same data
+behind the band structure of [JZ] §4.5.1 (p. 68). The energies (`examples/raw_data.json`)
+are sampled at the six symmetry-distinct points of the irreducible triangle:
+top, fcc, hcp, bridge and the top–fcc and top–hcp midpoints, each at nine heights
+$-1.0 \le z \le 1.2$ Å, with $z = 0$ the global minimum. In fractional coordinates
+$\mathbf r = u\,\mathbf a_1 + v\,\mathbf a_2$, with $\mathbf a_1 = a(1,0)$,
+$\mathbf a_2 = a(\tfrac12, \tfrac{\sqrt3}{2})$, $a = 2.489$ Å and a top Ni atom at the
+origin, the sites are fcc $(\tfrac13,\tfrac13)$, hcp $(\tfrac23,\tfrac23)$ and bridge
+$(0,\tfrac12)$.
+
+### 1.2 Interpolation
+
+The $C_{3v}$ symmetry of the surface leaves exactly six independent plane-wave
+"stars" up to the third reciprocal-lattice shell:
+
+$$
+\begin{aligned}
+f_0 &= 1, &
+f_1 &= \textstyle\sum_{3} \cos 2\pi(\cdot), &
+g_1 &= \sin 2\pi u + \sin 2\pi v - \sin 2\pi(u+v), \\
+f_2 &= \textstyle\sum_3 \cos 2\pi(u-v,\,2u+v,\,u+2v), &
+f_3 &= \textstyle\sum_3 \cos 4\pi(\cdot), &
+g_3 &= \sin 4\pi u + \sin 4\pi v - \sin 4\pi(u+v),
+\end{aligned}
+$$
+
+where $\sum_3 \cos 2\pi(\cdot)$ means $\cos 2\pi u + \cos 2\pi v + \cos 2\pi(u+v)$. The
+cosine stars are symmetric under the mirror that exchanges fcc and hcp; the sine
+stars $g_1, g_3$ are antisymmetric and carry the fcc–hcp energy difference. At each
+height the six coefficients are fixed by the six site energies, so the fit is exact
+at the data points. The coefficients are then interpolated in $z$ with a cubic spline.
+
+The top site is strongly repulsive at small $z$ (1.4 keV at $z = -1$ Å). To stop
+this from ringing through the Fourier series the energies are compressed before
+fitting, $T(V) = B\ln(1 + V/B)$ with $B = 2.5$ eV, and expanded afterwards; energies
+above 4 eV are capped, which does not affect any state below the barrier.
+
+### 1.3 Symmetric and raw variants
+
+`SurfacePotential.from_dft(path, degenerate=...)` builds either
+
+* **raw**: the DFT as computed, with hcp 16.9 meV above fcc at the minima; or
+* **symmetric**: the hcp (and top–hcp) curves replaced by the fcc (and top–fcc)
+  ones, so the two hollows are degenerate and the sine stars vanish. The barrier
+  (143 meV along the fcc → bridge → hcp minimum-energy path), the vibrations and
+  the $z$ dependence are unchanged.
+
+The raw PES reproduces the band structure of [JZ] Table 4.3 (p. 72) closely:
+hcp–fcc ground-state splitting 12.9 meV (12.7), parallel vibration 84.2 meV (82.2),
+perpendicular 115.0 meV (117.4), and ground-band width $4\times10^{-4}$ meV
+($5\times10^{-4}$). Only the zero-point energy differs by a constant ~10 meV.
+
+The symmetric variant fits the deep-tunnelling plateau far better (§7). It conflicts
+with the 19 meV fcc–hcp difference that [JZ] extracts from the fast/slow rate ratio
+(§4.4.2, p. 62), which is why both variants are kept.
+
+---
+
+## 2. Bloch states (`bloch.py`)
+
+### 2.1 Supercell and Bloch's theorem
+
+An $n\times n$ supercell of the surface with periodic boundary conditions is
+equivalent to the $n\times n$ Monkhorst–Pack grid $\mathbf k = (i\,\mathbf b_1 + j\,\mathbf b_2)/n$,
+$i,j = 0\dots n-1$ (`k_grid`), with $\mathbf a_i\cdot\mathbf b_j = 2\pi\delta_{ij}$.
+By Bloch's theorem the supercell Hamiltonian is block diagonal in $\mathbf k$, and the
+periodic part $u_\mathbf k$ of each eigenstate obeys
+
+$$
+\left[\frac{\hbar^2}{2m}(-i\nabla + \mathbf k)^2 + V(\mathbf r)\right] u_\mathbf k = E\,u_\mathbf k ,
+$$
+
+the same block structure as [MO] Eqs. 3.17–3.20 (pp. 31–32). Each block is solved
+on an $18\times18$ grid of the unit cell, with the kinetic energy applied by FFT. The
+$z$ direction is periodic over the 2.2 Å range of the data; the potential exceeds
+1 eV at both ends, so the low states vanish there.
+
+### 2.2 Contracted z basis
+
+The fast $z$ vibrations are removed before diagonalising. The 1D problem
+$T_z + V(\mathrm{fcc}, z)$ is solved once on 28 points and $z$ is projected onto its
+lowest $n_z = 6$ states $\phi_i(z)$. The 3D Hamiltonian then acts on
+$18\times18\times6$ coefficients:
+
+$$
+H_{ij}(\mathbf r_\parallel) = \langle\phi_i|T_z|\phi_j\rangle + \langle\phi_i|V(\mathbf r_\parallel, z)|\phi_j\rangle ,
+$$
+
+plus the in-plane kinetic energy. The lowest 48 states per $\mathbf k$ are found by
+Lanczos (`eigsh`). Six $z$ states reproduce the full-grid energies to ~$10^{-3}$ meV.
+
+### 2.3 Time reversal
+
+Only about half the k points are diagonalised. Time reversal gives
+$\psi_{-\mathbf k} = \psi_\mathbf k^*$; because states are stored at $\mathbf k$ reduced into
+$[0,1)^2$, the periodic part picks up a reciprocal-lattice phase,
+
+$$
+u_\mathbf k = e^{-i\mathbf G\cdot\mathbf r}\,u_{\mathbf m}^*, \qquad \mathbf G = \mathbf k + \mathbf m,
+$$
+
+where $\mathbf m = -\mathbf k \bmod 1$ is the stored partner. Omitting this phase silently
+corrupts every coupling matrix element involving those k points.
+
+---
+
+## 3. System–bath coupling (`ume.py`)
+
+### 3.1 Periodic Caldeira–Leggett model
+
+The linear Caldeira–Leggett coupling $x\,\phi(t)$ is not periodic. [MO] §6.2
+(Eqs. 6.3–6.4, p. 94) replaces it by a pair of operators coupled to independent baths
+with the same correlation function,
+
+$$
+H = H_s + \frac{1}{k}\cos(k\hat x)\,\phi_c(t) + \frac{1}{k}\sin(k\hat x)\,\phi_s(t),
+$$
+
+which is periodic when $k$ is a multiple of $2\pi/L$ and reduces to linear coupling
+for $k\,\Delta x \ll 1$, where $\Delta x$ is the coherence length. No counterterm is
+needed because $\cos^2 + \sin^2 = 1$.
+
+### 3.2 Extension to the surface
+
+The package uses one $(\cos,\sin)$ pair along each of the three equivalent directions
+$\mathbf q_j \in \{\mathbf b_1, \mathbf b_2, -\mathbf b_1-\mathbf b_2\}/n$. These are the smallest
+wavevectors the $n\times n$ supercell allows, $|\mathbf q| = |\mathbf b|/n = 2.92/n$ Å⁻¹.
+Each pair has weight $2/3$, because $\sum_j \tfrac23\hat{\mathbf q}_j\hat{\mathbf q}_j^{\mathsf T} = \mathbb 1$,
+so the in-plane friction is isotropic as $q\to0$.
+
+A unitary rotation of each pair into $e^{\pm i\mathbf q_j\cdot\mathbf r}/q$ leaves the master
+equation unchanged:
+
+$$
+\mathcal D[\cos/q] + \mathcal D[\sin/q] = \tfrac{1}{2q^2}\left(\mathcal D[e^{i\mathbf q\cdot\mathbf r}] + \mathcal D[e^{-i\mathbf q\cdot\mathbf r}]\right).
+$$
+
+In this form every coupling shifts the crystal momentum by $\pm\mathbf q_j$, so its matrix
+elements are overlaps of periodic parts:
+
+$$
+\langle\psi_{\mathbf k+\mathbf q,a}|\,e^{i\mathbf q\cdot\mathbf r}\,|\psi_{\mathbf k,b}\rangle = \sum_{\mathbf r} u^*_{\mathbf k+\mathbf q,a}(\mathbf r)\,u_{\mathbf k,b}(\mathbf r),
+$$
+
+with an extra $e^{i\mathbf G\cdot\mathbf r}$ when $\mathbf k+\mathbf q$ wraps past the zone edge.
+This is the scattering-operator structure of [MO] Eqs. 3.21–3.22. Each of the six
+operators carries weight $1/3$. The $z$ motion couples linearly ($A = z$, weight 1,
+same friction) and does not change $\mathbf k$.
+
+The supercell size $n$ is therefore also the coupling wavevector: increasing $n$
+takes the periodic coupling towards linear coupling, and is the main convergence
+parameter (§6).
+
+---
+
+## 4. Universal temperature correction (`ume.py`, `bath.py`)
+
+### 4.1 From Bloch–Redfield to the UME
+
+For a coupling $A\,\phi(t)$ with bath correlation $D(\tau)$, the Bloch–Redfield
+equation ([MO] Eqs. 7.75–7.76, p. 130) has a Hamiltonian part
+$H_\Lambda = \tfrac12\kappa A^2 - \tfrac{i}{2\hbar}(A\Lambda - \Lambda^\dagger A)$, with
+$\Lambda = \int_0^\infty D(\tau)A(-\tau)\,d\tau$, and a dissipator that is not of Lindblad
+form. The *universal* correction ([MO] §7.12, Eqs. 7.79–7.81, pp. 130–131; following
+[NR]) keeps the Hamiltonian part exactly and replaces the dissipator by a single
+jump operator,
+
+$$
+\partial_t\rho = -\frac{i}{\hbar}[H_s + H_U, \rho] + L_U\rho L_U^\dagger - \tfrac12\{L_U^\dagger L_U, \rho\},
+\qquad L_U = \int d\tau\, g(\tau)\,A(\tau).
+$$
+
+The result is completely positive and trace preserving, and the transition rates
+between eigenstates of $H_s$ equal the Fermi golden-rule (Bloch–Redfield) rates.
+It is valid when the bath correlation time $\hbar/k_BT$ is short compared with
+$1/\gamma$, with no condition on the level spacing of $H_s$. This matters for H, where
+$\hbar\omega/k_BT \approx 4$–8 and the standard high-temperature correction (L =
+x + iħp/4mk_BT) fails ([MO] §7.11, Table 7.4).
+
+### 4.2 Evaluation in the eigenbasis
+
+For a general potential, $L_U$ has no closed form ([MO] p. 131). In the eigenbasis of
+$H_s$, however, the time integrals become multiplication by a function of the transition
+frequency $\omega_{ba} = (E_b - E_a)/\hbar$ ([UME] Eqs. 5–7):
+
+$$
+(L_U)_{ab} = \frac{1}{\hbar}\sqrt{S(\omega_{ba})}\,A_{ab}, \qquad
+H_U = -\frac{i}{2\hbar}\left(A^\dagger\Lambda - \Lambda^\dagger A\right), \qquad
+\Lambda_{ab} = A_{ab}\,\Gamma(\omega_{ba}).
+$$
+
+Here $a$ is the final and $b$ the initial state, and
+
+$$
+S(\omega) = \frac{2\hbar J(\omega)}{1 - e^{-\hbar\omega/k_BT}}, \qquad
+\Gamma(\nu) = \tfrac12 S(\nu) + i P(\nu), \qquad
+P(\nu) = \frac{1}{2\pi}\,\mathcal P\!\!\int \frac{S(\omega)}{\nu-\omega}\,d\omega .
+$$
+
+$S$ obeys detailed balance, $S(-\omega) = e^{-\hbar\omega/k_BT}S(\omega)$, so every
+transition samples the bath at its own frequency and the steady state is Boltzmann up
+to $O(\gamma)$. For a non-Hermitian coupling such as $e^{i\mathbf q\cdot\mathbf r}$ the same
+expressions hold with $A^\dagger$ in place of $A$, which is what the $\pm\mathbf q$ pairs need.
+
+### 4.3 Ohmic bath without a cutoff
+
+The bath is Ohmic, $J(\omega) = \eta\,\omega$ with $\eta = m\gamma$, equivalent to the
+$\gamma(\omega) = 2m\gamma\omega/\pi$ of [MO]. For this bath $P(\nu)$ diverges, but only
+through two terms, both of which drop out:
+
+1. **A constant**, $-\hbar\eta\omega_c/2$, which cancels the counterterm $\tfrac12\kappa A^\dagger A$
+   with $\kappa = \eta\omega_c$ exactly ([MO] Eq. 7.77). This is why the UME is
+   well defined for an Ohmic bath ([MO] Eq. 7.78 and the text after it).
+2. **A term linear in ν**, $\propto \nu\ln\omega_c$, which multiplies the double
+   commutator $[A^\dagger,[H_s,A]]$. For both $A = z$ and $A = e^{i\mathbf q\cdot\mathbf r}/q$ this is
+   the c-number $-\hbar^2/m$, so it only shifts all energies equally.
+
+What remains is cutoff-free. Writing $\coth$ as a Matsubara sum and removing the two
+terms above gives the closed form used in `OhmicBath.principal_value`:
+
+$$
+P(\nu) = 2\eta k_BT\;x\left[\mathrm{Re}\,\psi(1 + ix) + \gamma_E\right], \qquad x = \frac{\hbar\nu}{2\pi k_BT},
+$$
+
+which tends to the standard Ohmic Lamb shift $(\hbar\eta\nu/\pi)\ln(\hbar\nu/2\pi k_BT)$ at
+large ν. The cancellation of the c-number term is exact only in a complete basis,
+which is why $H_U$ is built in a large basis (§5).
+
+### 4.4 Friction
+
+The friction is electron–hole (electronic) friction. To leading order this is Ohmic
+and independent of temperature, because the Fermi window $-dn_f/dE$ reduces to
+$\delta(E - E_F)$ for $k_BT \ll E_F$ ([MO] §5.4, Eqs. 5.38–5.43, pp. 81–83).
+Temperature and frequency dependence enter only through structure in the density of
+states near $E_F$.
+
+The friction coefficient $\eta = m\gamma$ couples to the velocity and does not depend
+on the adsorbate's mass, so deuterium uses $\gamma_\mathrm D = \gamma_\mathrm H\,m_\mathrm H/m_\mathrm D$.
+Independent estimates for H on close-packed metals lie around γ ≈ 1–2.5 ps⁻¹ ([PT]
+§6.3.7 and §6.5: HREELS and IR linewidths and TDDFT friction; [PT] uses γ_H = 1 and
+γ_D = 0.5 ps⁻¹).
+
+---
+
+## 5. Truncation and assembly (`ume.py`, `model.py`)
+
+### 5.1 Two basis sizes
+
+* **Lamb-shift basis**: $H_U$ is a sum over intermediate states,
+  $(A^\dagger\Lambda)_{ab} = \sum_c A^*_{ca}A_{cb}\Gamma(\omega_{bc})$, and its cutoff-free form
+  relies on completeness (§4.3). It is built from the lowest 48 bands per $\mathbf k$
+  (up to ~360 meV), which converges the rates to ~0.4%. This follows [UME] §5.1
+  ("$N_\mathrm{big} \ge 2N$").
+* **Master-equation basis**: the Liouvillian keeps every band whose mean energy lies
+  within 150 meV of the ground band, i.e. every band below the barrier (11 bands
+  for H, 17 for D). D needs more: its first vibrational band barely tunnels, so its
+  activated hopping runs through higher bands.
+
+$H_U$ and $L_U$ are truncated to the master-equation basis, and $L_U^\dagger L_U$ is built
+from the *truncated* $L_U$, so the truncated generator stays exactly trace preserving
+and completely positive ([UME] §5.1). Real transitions out of the kept bands are
+neglected; they are thermally negligible below the barrier.
+
+### 5.2 Translation-invariant sector
+
+Each coupling shifts $\mathbf k$ by $\pm\mathbf q_j$ (or 0 for $z$), so the dissipator maps a
+density matrix that is diagonal in $\mathbf k$, $\rho = \oplus_\mathbf k\rho_\mathbf k$, to another
+one. The steady state and fcc ↔ hcp population exchange live entirely in this
+sector, of dimension $n^2 N^2$ rather than $(n^2N)^2$. In row-major vectorisation
+($\mathrm{vec}(A\rho B) = (A\otimes B^{\mathsf T})\,\mathrm{vec}\,\rho$) the blocks are
+
+$$
+\mathcal L_{\mathbf k\mathbf k} = -\tfrac{i}{\hbar}\left(H_\mathbf k\otimes\mathbb 1 - \mathbb 1\otimes H_\mathbf k^{\mathsf T}\right) - \tfrac12\left(G_\mathbf k\otimes\mathbb 1 + \mathbb 1\otimes G_\mathbf k^{\mathsf T}\right),
+\qquad
+\mathcal L_{\mathbf k'\mathbf k} = L_{\mathbf k'\leftarrow\mathbf k}\otimes L^*_{\mathbf k'\leftarrow\mathbf k},
+$$
+
+with $H_\mathbf k = E_\mathbf k + H_{U,\mathbf k}$ and $G_\mathbf k = \sum L^\dagger L$ over the channels leaving
+$\mathbf k$.
+
+Every bath term ($S$, $\Gamma$, $H_U$, $L^\dagger L$) is linear in γ, so
+$\mathcal L(\gamma) = \mathcal L_0 + \gamma\,\mathcal L_1$. Each temperature is therefore assembled
+once and reused for every friction.
+
+---
+
+## 6. Hop rates (`ume.py`, `model.py`)
+
+### 6.1 From the spectrum
+
+The slowest eigenvalues of $\mathcal L$ are found by sparse shift-invert. $\lambda_0 = 0$ is
+the steady state $\rho_\mathrm{ss}$, and $\lambda_1$ is the exchange of population between
+the fcc and hcp sublattices ([UME] Eq. 9 and §6):
+
+$$
+-\lambda_1 = k_{\mathrm f\to\mathrm h} + k_{\mathrm h\to\mathrm f}.
+$$
+
+The two escape rates follow from detailed balance,
+$k_{\mathrm f\to\mathrm h}\,p_\mathrm f = k_{\mathrm h\to\mathrm f}\,p_\mathrm h$, with the steady-state fcc
+population $p_\mathrm f = \mathrm{Tr}(\rho_\mathrm{ss}P_\mathrm f)$. $P_\mathrm f$ projects onto the region
+of the cell closer to an fcc than an hcp hollow:
+
+$$
+k_\mathrm{slow} = k_{\mathrm f\to\mathrm h} = -\lambda_1(1 - p_\mathrm f), \qquad
+k_\mathrm{fast} = k_{\mathrm h\to\mathrm f} = -\lambda_1\,p_\mathrm f .
+$$
+
+These are total escape rates out of a site, summed over its three neighbours. That
+is the quantity [JZ] plots: his "rate" is the slow rate $\nu/\lambda$ of the two-sublattice
+jump model ([JZ] Eqs. 2.34–2.44, pp. 16–18). For degenerate hollows $p_\mathrm f = \tfrac12$
+and the two rates are equal.
+
+### 6.2 Validity
+
+Describing hopping by one rate needs $\lambda_1$ to be well separated from the next
+eigenvalue, which is intra-site vibrational relaxation at about γ. At $n = 4$:
+
+| | T (K) | $-\lambda_1$ (ps⁻¹) | $-\lambda_2$ (ps⁻¹) | $\lambda_2/\lambda_1$ |
+|---|---|---|---|---|
+| H | 120 | 5.6×10⁻³ | 0.84 | 150 |
+| H | 260 | 3.9×10⁻² | 0.83 | 21 |
+| D | 120 | 1.6×10⁻⁴ | 0.45 | 2788 |
+| D | 260 | 1.2×10⁻² | 0.44 | 36 |
+
+$\lambda_1$ is real at all temperatures, so hopping is incoherent.
+
+**Limitation.** The k-diagonal sector sees only fcc ↔ hcp exchange. A long jump
+(fcc → fcc) leaves the sublattice populations unchanged and is invisible to
+$\lambda_1$. Capturing it requires the intermediate scattering function,
+$I(\Delta\mathbf K, t) = \mathrm{Tr}\!\left[e^{i\Delta\mathbf K\cdot\mathbf r}e^{\mathcal Lt}\left(\rho_\mathrm{ss}e^{-i\Delta\mathbf K\cdot\mathbf r}\right)\right]$
+([MO] Eq. 6.38, p. 105), which evolves in the sector of elements $|\mathbf k+\Delta\mathbf K\rangle\langle\mathbf k|$.
+Its two slowest eigenvalues would be the two exponential decay rates measured by HeSE.
+This is not yet implemented.
+
+### 6.3 The two regimes
+
+* **Deep tunnelling** (below ~160 K). Only the fcc and hcp ground bands are occupied.
+  For degenerate hollows the ground states tunnel with matrix element $t$ (the ground
+  band has width ~$6t$; $t \approx 0.03$ meV for H), and bath dephasing $\Gamma_\phi \propto \gamma T$
+  turns this into incoherent hopping at a rate $\sim t^2/\hbar^2\Gamma_\phi$ ([UME] Eq. 11). The
+  rate is therefore $\propto t^2/\gamma$ and rises slowly on cooling. With a bias ε
+  (raw PES), hopping uphill needs a bath quantum of energy ε, and the rate falls as
+  $e^{-\varepsilon/k_BT}$.
+* **Activated** (above ~160 K). The bath excites the parallel vibration, whose band is
+  wide enough to tunnel between sites before it relaxes. The activation energy is set
+  by the hopping band, not by the classical barrier ([UME] §4), and the rate rises
+  with γ up to a turnover.
+
+---
+
+## 7. Comparison with experiment (`examples/`)
+
+### 7.1 Data
+
+The measured rates (`examples/experiment.py`) are digitised from [JZ] Fig. 4.21
+(p. 64): HeSE at 0.07 ML, measured at ΔK = 0.8 Å⁻¹ along [11̄2] and rescaled to the
+mid-ΔK plateau ([JZ] p. 63). They are slow rates. The fast rate is shown as
+$k_\mathrm{slow}\,e^{\Delta E/k_BT}$, using the fast/slow ratio $\lambda = e^{\Delta E/k_BT}$ with
+ΔE = 19.0 ± 1.0 meV ([JZ] §4.4.2, p. 62). The activated part of the H data has
+$E_a = 97.7$ meV above 165 K, and the low-temperature plateau is
+(2.5–4.4)×10⁻³ ps⁻¹ ([JZ] Table 4.4).
+
+### 7.2 Fitting
+
+For H, γ is the only free parameter. It is fitted by minimising
+
+$$
+\chi^2 = \frac{1}{N}\sum_i \left(\frac{\ln k_\mathrm{model}(T_i) - \ln k_i}{\sigma_i}\right)^2,
+\qquad \sigma_i = \tfrac12\ln(k_i^\mathrm{high}/k_i^\mathrm{low}),
+$$
+
+on a log–log spline of the rates through a grid of frictions. D uses the H friction
+coefficient (§4.4) with nothing refitted.
+
+### 7.3 Results
+
+At $n = 6$ (§8):
+
+| | PES | γ (ps⁻¹) | χ² |
+|---|---|---|---|
+| H | symmetric | 1.02 (fitted) | 11.7 |
+| H | raw | 2.32 (fitted) | 29.9 |
+| D | symmetric | 0.51 (same η as H) | – |
+| D | raw | 1.16 (same η as H) | – |
+
+* **Symmetric PES.** H matches both the plateau and the 200 K rate, with a friction
+  consistent with independent estimates. The activated slope is too shallow (~67 meV
+  against 98 meV), because the first parallel vibration (~85 meV) carries the activated
+  hopping. Slow and fast rates are equal, so the measured fast/slow ratio is not
+  reproduced. D has no plateau and falls ~10× below the data at low T.
+* **Raw PES.** The activated regime of both H and D, including the fast rate, matches
+  well, but the bias suppresses deep tunnelling, so neither isotope has a plateau.
+
+Neither PES reproduces the deep-tunnelling rate of D, whose weak isotope effect
+(H/D ≈ 2) [PT] describes as an open problem (pp. 270–271).
+
+---
+
+## 8. Numerical parameters and convergence
+
+| Parameter | Value | Where | Convergence |
+|---|---|---|---|
+| Real-space grid | 18 × 18 × 28 | `Grid` | 0.01 meV vs 30 × 30 × 44 |
+| z states | 6 | `BlochSolver.n_z` | 10⁻³ meV vs full grid |
+| Lamb-shift bands | 48 per k | `BlochSolver.n_states` | 0.4% vs 72 |
+| Master-equation bands | below 150 meV (11 H, 17 D) | `model.ENERGY_WINDOW` | 16 → 20 bands: 4% (D, 230 K) |
+| Supercell | n = 6 | examples | within 2% of n = 10 (`examples/convergence.py`) |
+
+Convergence in $n$ is slowest at low temperature, where the deep-tunnelling rate is
+sensitive to how closely the periodic coupling approaches linear coupling ($q\,\Delta x \ll 1$).
+At 250 K the rate is converged already at $n = 2$.

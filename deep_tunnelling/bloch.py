@@ -45,10 +45,12 @@ class Grid:
 
     @property
     def shape(self) -> tuple[int, int, int]:
+        """Grid shape (n1, n2, nz)."""
         return (self.n1, self.n2, self.nz)
 
     @property
     def lz(self) -> float:
+        """Length of the periodic z range (A)."""
         return self.z_max - self.z_min
 
     @property
@@ -61,6 +63,7 @@ class Grid:
     def fractional(
         self,
     ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+        """Fractional in-plane coordinates (u, v) and z (A) of every grid point."""
         u = np.arange(self.n1) / self.n1
         v = np.arange(self.n2) / self.n2
         z = self.z_min + np.arange(self.nz) * self.lz / self.nz
@@ -140,9 +143,11 @@ class BlochSolver:
             return (kin + np.einsum("xyij,xyj->xyi", local, c)).ravel()
 
         size = int(np.prod(shape))
-        op = scipy.sparse.linalg.LinearOperator(
-            (size, size), matvec=matvec, dtype=np.complex128
-        )  # type: ignore[call-overload]
+        op = scipy.sparse.linalg.LinearOperator(  # ty: ignore[missing-argument]
+            (size, size),
+            matvec=matvec,  # ty: ignore[unknown-argument]
+            dtype=np.complex128,  # ty: ignore[parameter-already-assigned]
+        )
         v0 = np.zeros(shape, dtype=np.complex128)
         v0[:, :, 0] = 1.0
         energies, vectors = scipy.sparse.linalg.eigsh(

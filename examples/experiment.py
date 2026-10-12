@@ -35,7 +35,7 @@ Array = np.ndarray[Any, Any]
 # DFT PES of H on Ni(111) (M. Sacchi), six sites x nine heights
 RAW_DATA = Path(__file__).parent / "raw_data.json"
 
-# T (K), rate, low, high
+# columns: temperature in K, rate, lower and upper error bounds
 H_RATES = np.array(
     [
         (255, 0.0237, 0.0228, 0.0245),

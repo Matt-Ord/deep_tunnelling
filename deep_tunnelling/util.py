@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pickle  # ruff:ignore[suspicious-pickle-import]
+import pickle  # noqa: S403
 import types
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -112,7 +112,7 @@ class CachedFunction[**P, R]:
 
         try:
             with cache_path.open("rb") as f:
-                unpickler = pickle.Unpickler(f, buffers=buffers)  # ruff:ignore[suspicious-pickle-usage]
+                unpickler = pickle.Unpickler(f, buffers=buffers)  # noqa: S301
                 return unpickler.load()
         except FileNotFoundError:
             return None
@@ -182,7 +182,7 @@ def cached[**P, R](
 
     def _cached(f: Callable[P, R]) -> CachedFunction[P, R]:
         return update_wrapper(
-            CachedFunction(f, path, default_call=default_call),
+            CachedFunction(f, path, default_call=default_call),  # ty: ignore[invalid-argument-type]
             f,
         )  # ty: ignore[invalid-return-type]
 

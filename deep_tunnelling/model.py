@@ -35,7 +35,7 @@ class RateCurve:
 
 
 def n_rate_for(bands: BandData, window: float = ENERGY_WINDOW) -> int:
-    """Number of bands whose mean energy lies within window of the ground band."""
+    """Count the bands whose mean energy lies within window of the ground band."""
     mean = bands.energies.mean(axis=0)
     return int(np.sum(mean - mean[0] < window))
 

@@ -40,10 +40,12 @@ class OhmicBath:
 
     @property
     def eta(self) -> float:
+        """Friction coefficient eta = m gamma (meV ps / A^2)."""
         return self.mass * self.gamma
 
     @property
     def kt(self) -> float:
+        """Thermal energy (meV)."""
         return KB * self.temperature
 
     def s(self, w: Array) -> Array:

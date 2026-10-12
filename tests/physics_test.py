@@ -41,8 +41,11 @@ def test_bath_detailed_balance() -> None:
 
 
 def test_cutoff_free_lamb_shift_matches_matsubara_series() -> None:
-    """P(nu) = hbar eta theta sum_n nu^3 / (nu_n (nu^2 + nu_n^2)): the Matsubara series with the
-    divergent constant and linear terms removed (theta = 2 kT / hbar, nu_n = 2 pi n kT / hbar)."""
+    """Compare the closed form with its Matsubara series.
+
+    P(nu) = hbar eta theta sum_n nu^3 / (nu_n (nu^2 + nu_n^2)), the series with the
+    divergent constant and linear terms removed (theta = 2 kT / hbar, nu_n = 2 pi n kT / hbar).
+    """
     bath = OhmicBath(M_H, 1.0, 150.0)
     nu1 = 2 * np.pi * bath.kt / HBAR
     n = np.arange(1, 200_001)[:, None]
