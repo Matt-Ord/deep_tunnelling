@@ -14,23 +14,12 @@ RAW_DATA = Path(__file__).parent.parent / "examples" / "raw_data.json"
 
 def test_potential_reproduces_dft_sites() -> None:
     z, curves = load_site_curves(RAW_DATA)
-    potential = SurfacePotential.from_dft(RAW_DATA, degenerate=False)
+    potential = SurfacePotential.from_dft(RAW_DATA)
     for name, (u, v) in SITES.items():
         fitted = potential(np.full(z.shape, u), np.full(z.shape, v), z)
         np.testing.assert_allclose(
             fitted, np.minimum(curves[name], potential.v_cap), atol=1e-8
         )
-
-
-def test_degenerate_potential_has_equivalent_hollows() -> None:
-    z, curves = load_site_curves(RAW_DATA)
-    potential = SurfacePotential.from_dft(RAW_DATA)
-    fcc = potential(np.full(z.shape, 1 / 3), np.full(z.shape, 1 / 3), z)
-    hcp = potential(np.full(z.shape, 2 / 3), np.full(z.shape, 2 / 3), z)
-    np.testing.assert_allclose(fcc, hcp, atol=1e-8)
-    np.testing.assert_allclose(
-        fcc, np.minimum(curves["fcc"], potential.v_cap), atol=1e-8
-    )
 
 
 def test_bath_detailed_balance() -> None:

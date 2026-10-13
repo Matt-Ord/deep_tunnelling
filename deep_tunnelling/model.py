@@ -10,18 +10,19 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from deep_tunnelling.ume import BandData, hop_rates
+from deep_tunnelling.ume import hop_rates
 
 if TYPE_CHECKING:
-    from deep_tunnelling.ume import RateResult
+    from deep_tunnelling.ume import BandData, Friction, RateResult
 
 Array = np.ndarray[Any, Any]
 
-# bands in the master equation: all bands whose mean energy lies within this
-# window above the ground state, i.e. every band below the ~143 meV barrier.
-# H: 11 bands, D: 17 bands (D's first vibrational band barely tunnels, so its
-# activated hopping runs through the higher bands).
-ENERGY_WINDOW = 150.0  # meV
+# bands in the master equation: those whose mean energy lies below MAX_ENERGY
+# above the ground band. Activated hopping runs through the bands at ~85-150 meV
+# (just below the 143 meV barrier) at every temperature, so the cutoff is a fixed
+# energy rather than a multiple of k_B T: 6 k_B T drops these bands and
+# underestimates the H rate by 87% at 160 K (D: 88%). H: 10 bands, D: 16.
+MAX_ENERGY = 150.0  # meV
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -29,51 +30,45 @@ class RateCurve:
     """Slow (out of fcc) and fast (out of hcp) escape rates (ps^-1) at one friction."""
 
     mass: float
-    gamma: float  # ps^-1
+    friction: Friction
     temperatures: Array  # K
     slow: Array
     fast: Array
 
-    @property
-    def eta(self) -> float:
-        """Friction coefficient eta = m gamma, independent of the adsorbate mass for e-h friction."""
-        return self.mass * self.gamma
 
-
-def n_rate_for(bands: BandData, window: float = ENERGY_WINDOW) -> int:
-    """Count the bands whose mean energy lies within window of the ground band."""
+def n_rate_for(bands: BandData) -> int:
+    """Count the bands whose mean energy lies within MAX_ENERGY of the ground band."""
     mean = bands.energies.mean(axis=0)
-    return int(np.sum(mean - mean[0] < window))
+    return int(np.sum(mean - mean[0] < MAX_ENERGY))
 
 
 def _single_threaded_hop_rates(
-    bands: BandData, mass: float, gammas: list[float], n_rate: int, temperature: float
+    bands: BandData, mass: float, frictions: list[Friction], temperature: float
 ) -> list[RateResult]:
     # one BLAS thread per process, so parallel temperatures do not oversubscribe the cores
     with threadpool_limits(limits=1, user_api="blas"):
-        return hop_rates(bands, mass, temperature, gammas, n_rate)
+        return hop_rates(bands, mass, temperature, frictions, n_rate_for(bands))
 
 
 def rates(
-    bands: BandData, mass: float, temperatures: Array, gammas: list[float]
+    bands: BandData, mass: float, temperatures: Array, frictions: list[Friction]
 ) -> list[RateCurve]:
-    """Escape-rate curves, one per friction. Slow and fast are equal for degenerate hollows."""
-    n_rate = n_rate_for(bands)
+    """Escape-rate curves, one per friction."""
     # one process per temperature
     with ProcessPoolExecutor() as pool:
         results = list(
             pool.map(
-                partial(_single_threaded_hop_rates, bands, mass, gammas, n_rate),
+                partial(_single_threaded_hop_rates, bands, mass, frictions),
                 temperatures,
             )
-        )  # (T, gamma)
+        )  # (T, friction)
     return [
         RateCurve(
             mass=mass,
-            gamma=gamma,
+            friction=friction,
             temperatures=np.asarray(temperatures),
             slow=np.array([row[j].fcc_escape_rate for row in results]),
             fast=np.array([row[j].hcp_escape_rate for row in results]),
         )
-        for j, gamma in enumerate(gammas)
+        for j, friction in enumerate(frictions)
     ]

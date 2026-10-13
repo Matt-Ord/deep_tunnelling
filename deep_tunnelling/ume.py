@@ -20,10 +20,19 @@ the divergent constant of the principal value exactly (thesis Eqs. 7.77-7.78),
 so neither appears.
 
 H_U is built in a large basis of n_big bands and truncated with the jump
-operators to the n_rate lowest bands (fcc, hcp and the first parallel
-vibrational cluster). Since the steady state is translation invariant, hopping
+operators to the n_rate lowest bands (the thermally accessible ones, see
+model.py). Since the steady state is translation invariant, hopping
 lives entirely in the sector of density matrices diagonal in k, of dimension
 n^2 n_rate^2.
+
+Ground-state friction: fcc <-> hcp transitions between the two hollow ground
+states may be mediated by a different friction process than the rest. A
+second set of couplings, the same periodic cos(q_j.r)/q, sin(q_j.r)/q pairs
+projected onto the two ground bands at every k (bands 0 and 1, the fcc and hcp
+ground states), couples to independent baths with its own friction gamma_g.
+The projection commutes with the unitary mixing into e^{+-i q_j.r} / q, so the
+projected exponentials are used as above. Every bath
+term is linear in its friction, so the Liouvillian is L0 + gamma L1 + gamma_g L_g.
 """
 
 from __future__ import annotations
@@ -47,6 +56,22 @@ DIRECTIONS = ((1, 0), (0, 1), (-1, -1))
 
 
 @dataclass(frozen=True)
+class Friction:
+    """Standard friction gamma and ground-state friction gamma_g (ps^-1)."""
+
+    gamma: float
+    ground: float = 0.0
+
+    def scaled(self, factor: float) -> Friction:
+        """Both frictions times factor, e.g. m_H / m_D for the same eta = m gamma."""
+        return Friction(self.gamma * factor, self.ground * factor)
+
+
+# bands of the two hollow ground states (fcc, hcp) coupled by the ground-state friction
+GROUND_BANDS = (0, 1)
+
+
+@dataclass(frozen=True)
 class Channel:
     """A coupling operator mapping crystal momentum k (index src) to k' (index dst)."""
 
@@ -54,6 +79,7 @@ class Channel:
     dst: int
     matrix: Array  # (n_big, n_big), rows in k', columns in k
     weight: float
+    periodic: bool = True  # an in-plane e^{+-i q.r} / q coupling, False for z
 
 
 @dataclass
@@ -68,21 +94,30 @@ class BandData:
     def build(cls, solver: BlochSolver, n: int) -> BandData:
         """Diagonalize every k point of the n x n grid and build all coupling channels."""
         kpoints = k_grid(n)
-        states = [
-            solver.eigenstates(k)[1].reshape(solver.n_states, -1) for k in kpoints
-        ]
+        solutions = [solver.eigenstates(k) for k in kpoints]
+        energies = np.array([e for e, _ in solutions])
+        states = [u.reshape(solver.n_states, -1) for _, u in solutions]
         u, v, z = solver.grid.fractional()
         fcc_mask = _fcc_mask(u, v).ravel()
         projectors = [(uk.conj() * fcc_mask) @ uk.T for uk in states]
         channels = [
             *_momentum_channels(solver.grid, kpoints, states, n),
             *(
-                Channel(i, i, (uk.conj() * z.ravel()) @ uk.T, 1.0)
+                Channel(i, i, (uk.conj() * z.ravel()) @ uk.T, 1.0, periodic=False)
                 for i, uk in enumerate(states)
             ),
         ]
-        energies = np.array([solver.eigenstates(k)[0] for k in kpoints])
         return cls(energies, np.array(projectors), channels)
+
+    def ground_state_channels(self) -> list[Channel]:
+        """Project the periodic in-plane couplings onto the two ground bands."""
+        mask = np.zeros(self.energies.shape[1:] * 2)
+        mask[np.ix_(GROUND_BANDS, GROUND_BANDS)] = 1.0
+        return [
+            Channel(ch.src, ch.dst, ch.matrix * mask, ch.weight)
+            for ch in self.channels
+            if ch.periodic
+        ]
 
 
 def _momentum_channels(
@@ -149,37 +184,48 @@ class RateResult:
 
     @property
     def hcp_escape_rate(self) -> float:
-        """Total escape rate out of an hcp hollow (ps^-1); equal to fcc for degenerate hollows."""
+        """Total escape rate out of an hcp hollow (ps^-1)."""
         return self.total_rate * self.p_fcc
 
 
-def _assemble(
-    bands: BandData, bath: OhmicBath | None, n_rate: int
+def _coherent(bands: BandData, n_rate: int) -> scipy.sparse.csr_matrix:
+    """-i/hbar [H_s, .] in the k-diagonal sector."""
+    eye = np.eye(n_rate)
+    return scipy.sparse.block_diag(
+        [
+            -1j / HBAR * (np.kron(np.diag(e), eye) - np.kron(eye, np.diag(e)))
+            for e in bands.energies[:, :n_rate]
+        ],
+        format="csr",
+    )
+
+
+def _dissipator(
+    bands: BandData, channels: list[Channel], bath: OhmicBath, n_rate: int
 ) -> scipy.sparse.csr_matrix:
-    """Assemble the k-diagonal Liouvillian: coherent part from the bare energies (bath=None) or the bath terms."""
+    """Lamb shift H_U and dissipator of the given channels in the k-diagonal sector."""
     nk, n_big = bands.energies.shape
     e = bands.energies
     h_u = np.zeros((nk, n_big, n_big), dtype=complex)
     jumps: list[tuple[int, int, Array]] = []
-    if bath is not None:
-        for ch in bands.channels:
-            w = (
-                e[ch.src][None, :] - e[ch.dst][:, None]
-            ) / HBAR  # w_ba, b in k (col), a in k' (row)
-            a = ch.matrix
-            lam = a * bath.gamma_function(w)
-            h_u[ch.src] += (
-                ch.weight * (-0.5j / HBAR) * (a.conj().T @ lam - lam.conj().T @ a)
-            )
-            lu = np.sqrt(ch.weight) * a * np.sqrt(bath.s(w)) / HBAR
-            jumps.append((ch.src, ch.dst, lu[:n_rate, :n_rate]))
+    for ch in channels:
+        w = (
+            e[ch.src][None, :] - e[ch.dst][:, None]
+        ) / HBAR  # w_ba, b in k (col), a in k' (row)
+        a = ch.matrix
+        lam = a * bath.gamma_function(w)
+        h_u[ch.src] += (
+            ch.weight * (-0.5j / HBAR) * (a.conj().T @ lam - lam.conj().T @ a)
+        )
+        lu = np.sqrt(ch.weight) * a * np.sqrt(bath.s(w)) / HBAR
+        jumps.append((ch.src, ch.dst, lu[:n_rate, :n_rate]))
     eye = np.eye(n_rate)
     g = np.zeros((nk, n_rate, n_rate), dtype=complex)
     for src, _, lu in jumps:
         g[src] += lu.conj().T @ lu
     blocks: dict[tuple[int, int], Array] = {}
     for i in range(nk):
-        h = h_u[i, :n_rate, :n_rate] + (np.diag(e[i, :n_rate]) if bath is None else 0)
+        h = h_u[i, :n_rate, :n_rate]
         h = 0.5 * (h + h.conj().T)
         blocks[i, i] = -1j / HBAR * (np.kron(h, eye) - np.kron(eye, h.T)) - 0.5 * (
             np.kron(g[i], eye) + np.kron(eye, g[i].T)
@@ -194,10 +240,13 @@ def _assemble(
 
 def liouvillian_parts(
     bands: BandData, mass: float, temperature: float, n_rate: int
-) -> tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix]:
-    """Split L(gamma) = L0 + gamma L1: every bath term (S, Gamma, H_U, L^dag L) is linear in gamma."""
-    return _assemble(bands, None, n_rate), _assemble(
-        bands, OhmicBath(mass, 1.0, temperature), n_rate
+) -> tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, scipy.sparse.csr_matrix]:
+    """Split L = L0 + gamma L1 + gamma_g L_g; every bath term (S, Gamma, H_U, L^dag L) is linear in its friction."""
+    bath = OhmicBath(mass, 1.0, temperature)
+    return (
+        _coherent(bands, n_rate),
+        _dissipator(bands, bands.channels, bath, n_rate),
+        _dissipator(bands, bands.ground_state_channels(), bath, n_rate),
     )
 
 
@@ -213,15 +262,21 @@ def slowest_eigenvalues(
 
 
 def hop_rates(
-    bands: BandData, mass: float, temperature: float, gammas: list[float], n_rate: int
+    bands: BandData,
+    mass: float,
+    temperature: float,
+    frictions: list[Friction],
+    n_rate: int,
 ) -> list[RateResult]:
     """Hop rates for several frictions at one temperature, assembling the Liouvillian once."""
-    l0, l1 = liouvillian_parts(bands, mass, temperature, n_rate)
+    l0, l1, l_g = liouvillian_parts(bands, mass, temperature, n_rate)
     nk = bands.energies.shape[0]
     projector = bands.fcc_projector[:, :n_rate, :n_rate]
     out = []
-    for gamma in gammas:
-        w, stationary = slowest_eigenvalues((l0 + gamma * l1).tocsr())
+    for friction in frictions:
+        w, stationary = slowest_eigenvalues(
+            (l0 + friction.gamma * l1 + friction.ground * l_g).tocsr()
+        )
         rho = stationary.reshape(nk, n_rate, n_rate)
         rho /= np.trace(rho, axis1=1, axis2=2).sum()
         out.append(

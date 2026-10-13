@@ -77,24 +77,24 @@ this from ringing through the Fourier series the energies are compressed before
 fitting, $T(V) = B\ln(1 + V/B)$ with $B = 2.5$ eV, and expanded afterwards; energies
 above 4 eV are capped, which does not affect any state below the barrier.
 
-### 1.3 Symmetric and raw variants
+### 1.3 Band structure
 
-`SurfacePotential.from_dft(path, degenerate=...)` builds either
-
-* **raw**: the DFT as computed, with hcp 16.9 meV above fcc at the minima; or
-* **symmetric**: the hcp (and top–hcp) curves replaced by the fcc (and top–fcc)
-  ones, so the two hollows are degenerate and the sine stars vanish. The barrier
-  (143 meV along the fcc → bridge → hcp minimum-energy path), the vibrations and
-  the $z$ dependence are unchanged.
-
-The raw PES reproduces the band structure of [JZ] Table 4.3 (p. 72) closely:
+The PES is the DFT as computed, with hcp 16.9 meV above fcc at the minima. It
+reproduces the band structure of [JZ] Table 4.3 (p. 72) closely:
 hcp–fcc ground-state splitting 12.9 meV (12.7), parallel vibration 84.2 meV (82.2),
 perpendicular 115.0 meV (117.4), and ground-band width $4\times10^{-4}$ meV
 ($5\times10^{-4}$). Only the zero-point energy differs by a constant ~10 meV.
 
-The symmetric variant fits the deep-tunneling plateau far better (§7). It conflicts
-with the 19 meV fcc–hcp difference that [JZ] extracts from the fast/slow rate ratio
-(§4.4.2, p. 62), which is why both variants are kept.
+### 1.4 Optimized PES
+
+`SurfacePotential.from_dft(path, splitting_scale=..., bridge_shift=...)` adds two
+z-independent star corrections (`util.OPTIMIZED_PES` in the examples):
+`splitting_scale` multiplies the fcc/hcp-antisymmetric stars $g_1, g_3$, and
+`bridge_shift` (meV) adds the star combination that is 1 at the bridge and 0, with
+zero curvature, at both hollows (and 0 at top). They are fitted to the two H
+observables that probe the PES rather than the friction: the hcp–fcc ground-state
+splitting (19.0 meV, from the fast/slow ratio) and the activation energy above
+170 K (97.7 meV, nearly independent of γ). D is not used.
 
 ---
 
@@ -221,8 +221,7 @@ of two neighboring hollows a distance $d = a/\sqrt3 = 1.44$ Å apart,
 $\Gamma_\phi = \eta d^2 k_BT/\hbar^2$, which is $\approx 5\gamma$ at 120 K for H. The condition
 $\Gamma_\phi \ll k_BT/\hbar$ is therefore $\eta d^2/\hbar = 2\pi\alpha \ll 1$, independent of
 temperature, where α is the spin–boson coupling. For H, $2\pi\alpha \approx 0.33\,\gamma$/ps⁻¹,
-which is 0.33 at the symmetric-PES fit and 0.76 at the raw-PES fit (§7.3). Both values
-are marginal. [UME] §7.3 already finds a 20% spread between second-order master
+which is ≈0.8 for γ ≈ 2.3 ps⁻¹. This is marginal. [UME] §7.3 already finds a 20% spread between second-order master
 equations at $\alpha \approx 0.02$. This matters for H, where
 $\hbar\omega/k_BT \approx 4$–8 and the standard high-temperature correction (L =
 x + iħp/4mk_BT) fails ([MO] §7.11, Table 7.4).
@@ -305,9 +304,13 @@ Independent estimates for H on close-packed metals lie around γ ≈ 1–2.5 ps�
   (up to ~360 meV), which converges the rates to ~0.4%. This follows [UME] §5.1
   ("$N_\mathrm{big} \ge 2N$").
 * **Master-equation basis**: the Liouvillian keeps every band whose mean energy lies
-  within 150 meV of the ground band, i.e. every band below the barrier (11 bands
-  for H, 17 for D). D needs more: its first vibrational band barely tunnels, so its
-  activated hopping runs through higher bands.
+  within `MAX_ENERGY` = 150 meV of the ground band, i.e. every band below the barrier
+  (10 bands for H, 16 for D). D needs more: its first vibrational band barely tunnels,
+  so its activated hopping runs through higher bands.
+
+  The cutoff is a fixed energy because activated hopping runs through the bands at
+  85–150 meV at every temperature: a cutoff of $6k_BT$ underestimates the H rate by
+  87% at 160 K (D: 88%), while 150 meV is within 3% (H) and 5% (D) of 20 bands.
 
 $H_U$ and $L_U$ are truncated to the master-equation basis, and $L_U^\dagger L_U$ is built
 from the *truncated* $L_U$, so the truncated generator stays exactly trace preserving
@@ -332,7 +335,8 @@ with $H_\mathbf k = E_\mathbf k + H_{U,\mathbf k}$ and $G_\mathbf k = \sum L^\da
 $\mathbf k$.
 
 Every bath term ($S$, $\Gamma$, $H_U$, $L^\dagger L$) is linear in γ, so
-$\mathcal L(\gamma) = \mathcal L_0 + \gamma\,\mathcal L_1$. Each temperature is therefore assembled
+$\mathcal L(\gamma) = \mathcal L_0 + \gamma\,\mathcal L_1$ (plus $\gamma_g\,\mathcal L_g$ for the ground-state
+couplings of §7.3). Each temperature is therefore assembled
 once and reused for every friction.
 
 ---
@@ -362,7 +366,7 @@ $$
 These are total escape rates out of a site, summed over its three neighbors. That
 is the quantity [JZ] plots: his "rate" is the slow rate $\nu/\lambda$ of the two-sublattice
 jump model ([JZ] Eqs. 2.34–2.44, pp. 16–18). For degenerate hollows $p_\mathrm f = \tfrac12$
-and the two rates are equal.
+and the two rates would be equal.
 
 ### 6.2 Validity
 
@@ -389,17 +393,13 @@ This is not yet implemented.
 ### 6.3 The two regimes
 
 * **Deep tunneling** (below ~160 K). Only the fcc and hcp ground bands are occupied.
-  For degenerate hollows the ground states tunnel with matrix element $t$ (the ground
-  band has width ~$6t$; $t \approx 0.03$ meV for H), and bath dephasing $\Gamma_\phi \propto \gamma T$
-  turns this into incoherent hopping at a rate $\sim t^2/\hbar^2\Gamma_\phi$ ([UME] Eq. 11). The
-  rate is therefore $\propto t^2/\gamma$ and rises slowly on cooling. With a bias
-  $\varepsilon \gg t$ (raw PES, ε ≈ 13 meV), the eigenstates localize and a hop is a one-boson
-  transition with matrix element $\approx t d/\varepsilon$. Downhill this gives
-  $\sim 2\eta d^2t^2/\hbar^2\varepsilon$, and uphill an extra $e^{-\varepsilon/k_BT}$. Relative to the
-  degenerate rate this is a factor $\sim(2\pi\alpha)^2 k_BT/\varepsilon \approx 0.1$ (at γ = 1 ps⁻¹,
-  120 K), larger than the Boltzmann factor ($\approx 0.3$). The off-resonance suppression
-  therefore dominates. The biased rate grows as $\gamma$ rather than $1/\gamma$, which is part
-  of why the raw-PES fit needs a larger γ.
+  The fcc and hcp ground states are coupled by a tunneling matrix element
+  $t \approx 0.03$ meV for H. With the bias $\varepsilon \approx 13$ meV $\gg t$, the eigenstates
+  localize and a hop is a one-boson transition with matrix element $\approx t d/\varepsilon$.
+  Downhill this gives $\sim 2\eta d^2t^2/\hbar^2\varepsilon$, and uphill an extra
+  $e^{-\varepsilon/k_BT}$. The rate grows as γ and is suppressed by the off-resonance
+  factor $(t/\varepsilon)^2$, so a single friction fitted to the activated regime gives
+  no plateau (§7.3).
 * **Activated** (above ~160 K). The bath excites the parallel vibration, whose band is
   wide enough to tunnel between sites before it relaxes. The activation energy is set
   by the hopping band, not by the classical barrier ([UME] §4), and the rate rises
@@ -412,46 +412,51 @@ This is not yet implemented.
 ### 7.1 Data
 
 The measured rates (`examples/experiment.py`) are digitized from [JZ] Fig. 4.21
-(p. 64): HeSE at 0.07 ML, measured at ΔK = 0.8 Å⁻¹ along [11̄2] and rescaled to the
-mid-ΔK plateau ([JZ] p. 63). They are slow rates. The fast rate is shown as
-$k_\mathrm{slow}\,e^{\Delta E/k_BT}$, using the fast/slow ratio $\lambda = e^{\Delta E/k_BT}$ with
-ΔE = 19.0 ± 1.0 meV ([JZ] §4.4.2, p. 62). The activated part of the H data has
-$E_a = 97.7$ meV above 165 K, and the low-temperature plateau is
-(2.5–4.4)×10⁻³ ps⁻¹ ([JZ] Table 4.4).
+(p. 64): HeSE at 0.07 ML, ΔK = 0.8 Å⁻¹ along [11̄2], rescaled to the mid-ΔK plateau
+([JZ] p. 63). They are slow rates. The H fast rates are the slow rates times the
+fast/slow ratio λ fitted at each point ([JZ] Fig. 4.20, extracted from the vector
+graphic; its axis is $\log_{10}\lambda$ although labelled ln; no error bars). Their
+Arrhenius fit gives ΔE = 19.0 ± 1.0 meV ([JZ] §4.4.2), used for D, where λ was not
+measured. Above 165 K, $E_a$ = 97.7 ± 5.2 meV (H) and 99.8 ± 7.4 meV (D); the low-T
+plateau is (2.5–4.4)×10⁻³ ps⁻¹ ([JZ] Table 4.4). Other sources disagree on whether
+D has a plateau, so D is a secondary test.
 
 ### 7.2 Fitting
 
-For H, γ is the only free parameter. It is fitted by minimizing
+The frictions are fitted to the H slow rates by minimizing
 
 $$
 \chi^2 = \frac{1}{N}\sum_i \left(\frac{\ln k_\mathrm{model}(T_i) - \ln k_i}{\sigma_i}\right)^2,
 \qquad \sigma_i = \tfrac12\ln(k_i^\mathrm{high}/k_i^\mathrm{low}),
 $$
 
-on a log–log spline of the rates through a grid of frictions. D uses the H friction
-coefficient (§4.4) with nothing refitted.
+on a cubic spline of $\ln k$ through a log grid of frictions (`examples/util.py`).
+D uses the H friction coefficient $\eta = m\gamma$ (§4.4) with nothing refitted.
 
-### 7.3 Results
+### 7.3 Ground-state friction
 
-At $n = 6$ (§8):
+With a single friction the bias suppresses deep tunneling (§6.3), so the model has
+no low-temperature plateau. `examples/hydrogen_ground_friction.py` adds a second set
+of couplings: the periodic $\cos(\mathbf q_j\cdot\mathbf r)/q$, $\sin(\mathbf q_j\cdot\mathbf r)/q$ projected onto the two
+ground bands at every $\mathbf k$ (fcc and hcp ground states), coupled to independent
+baths with friction $\gamma_g$, so $\mathcal L = \mathcal L_0 + \gamma\mathcal L_1 + \gamma_g\mathcal L_g$. The projection
+commutes with the mixing into $e^{\pm i\mathbf q_j\cdot\mathbf r}/q$ (§3.2).
 
-| | PES | γ (ps⁻¹) | χ² |
-|---|---|---|---|
-| H | symmetric | 1.02 (fitted) | 11.7 |
-| H | raw | 2.32 (fitted) | 29.9 |
-| D | symmetric | 0.51 (same η as H) | – |
-| D | raw | 1.16 (same η as H) | – |
+This is a phenomenological placeholder for dissipation between the hollow ground
+states that Ohmic friction misses (e.g. surface relaxation), not a friction in the
+sense of §4. The projected operator is almost diagonal in site, so it mainly
+dephases fcc against hcp; when $\hbar\Gamma_\phi \gg \varepsilon$ the rate becomes the overdamped
+incoherent-tunneling rate $\sim 2t^2/\hbar^2\Gamma_\phi$, in which the bias drops out and which
+rises on cooling. The values of γ_g needed for this lie far outside the validity
+condition $2\pi\alpha \ll 1$ (§4.1).
 
-* **Symmetric PES.** H matches both the plateau and the 200 K rate, with a friction
-  consistent with independent estimates. The activated slope is too shallow (~67 meV
-  against 98 meV), because the first parallel vibration (~85 meV) carries the activated
-  hopping. Slow and fast rates are equal, so the measured fast/slow ratio is not
-  reproduced. D has no plateau and falls ~10× below the data at low T.
-* **Raw PES.** The activated regime of both H and D, including the fast rate, matches
-  well, but the bias suppresses deep tunneling, so neither isotope has a plateau.
-
-Neither PES reproduces the deep-tunneling rate of D, whose weak isotope effect
-(H/D ≈ 2) [PT] describes as an open problem (pp. 270–271).
+Weak-coupling mechanisms that keep $2\pi\alpha \ll 1$ cannot produce the plateau: a
+one-boson fcc → hcp transition has matrix element $\approx td/\varepsilon$ and grows with T, as do
+couplings that modulate the tunneling or the site energy; a temperature-dependent
+friction cannot raise the biased rate enough; and treating the bath exactly
+(polaron, golden rule in $t$) only lowers the rate. Resonant tunneling between
+degenerate hollows would give a plateau, but the measured fast/slow ratio rules out
+degenerate hollows.
 
 ---
 
@@ -462,7 +467,7 @@ Neither PES reproduces the deep-tunneling rate of D, whose weak isotope effect
 | Real-space grid | 18 × 18 × 28 | `Grid` | 0.01 meV vs 30 × 30 × 44 |
 | z states | 6 | `BlochSolver.n_z` | 10⁻³ meV vs full grid |
 | Lamb-shift bands | 48 per k | `BlochSolver.n_states` | 0.4% vs 72 |
-| Master-equation bands | below 150 meV (11 H, 17 D) | `model.ENERGY_WINDOW` | 16 → 20 bands: 4% (D, 230 K) |
+| Master-equation bands | below 150 meV (10 H, 16 D) | `model.MAX_ENERGY` | ≤3% (H), ≤5% (D) vs 20 bands (§5.1) |
 | Supercell | n = 6 | examples | within 2% of n = 10 (`examples/convergence.py`) |
 
 Convergence in $n$ is slowest at low temperature, where the deep-tunneling rate is

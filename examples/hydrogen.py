@@ -1,66 +1,68 @@
-"""H on Ni(111): fit the friction to Zhu's rates and plot the slow and fast escape rates.
+"""H on Ni(111): a single friction fitted to Zhu's slow rates, on the DFT and the optimized PES.
 
-Two PESs are compared: 'symmetric', with degenerate fcc and hcp hollows (the best
-model), and 'raw', the unmodified DFT with hcp 16.9 meV above fcc, where the slow
-and fast rates differ.
+The DFT PES has hcp 16.9 meV above fcc. The optimized PES (util.OPTIMIZED_PES) is
+tuned to the measured hollow splitting and activation energy of H.
 """
 
 from pathlib import Path
 
 import numpy as np
-import scipy.interpolate
-from experiment import H_RATES, RAW_DATA, FrictionFit, chi2, plot_against_experiment
+from experiment import H_FAST_RATES, H_RATES, plot_experimental_rates
+from util import FrictionFit, build_bands, fit_frictions
 
-from deep_tunnelling.bloch import BlochSolver
-from deep_tunnelling.model import rates
-from deep_tunnelling.potential import SurfacePotential
-from deep_tunnelling.ume import BandData
+from deep_tunnelling.plot import (
+    CAM_BLUE,
+    CAM_CHERRY,
+    get_fancy_figure,
+    plot_rate_arrhenius,
+)
 from deep_tunnelling.units import M_H
 from deep_tunnelling.util import cache_base_path, cached
 
-GAMMAS = [0.5, 0.7, 1.0, 1.4, 2.0, 3.0]  # ps^-1
+GAMMAS = [0.5, 0.7, 1.0, 1.4, 2.0, 3.0, 4.0]  # ps^-1
 TEMPERATURES = np.linspace(115.0, 260.0, 10)
 
 
 @cached(
-    lambda *, degenerate: Path(f"hydrogen.{'symmetric' if degenerate else 'raw'}.pkl")
+    lambda *, optimized: Path(f"hydrogen.{'optimized' if optimized else 'dft'}.pkl")
 )
-def fit_hydrogen(*, degenerate: bool) -> FrictionFit:
-    """Fit gamma on a log-log spline through a grid of frictions, then evaluate the best fit."""
-    potential = SurfacePotential.from_dft(RAW_DATA, degenerate=degenerate)
-    bands = BandData.build(BlochSolver(potential, M_H), n=6)
-    slow = np.array(
-        [curve.slow for curve in rates(bands, M_H, TEMPERATURES, GAMMAS)]
-    )  # (gamma, T)
-    spline = scipy.interpolate.CubicSpline(np.log(GAMMAS), np.log(slow), axis=0)
-    trial = np.linspace(np.log(GAMMAS[0]), np.log(GAMMAS[-1]), 2001)
-    gamma = float(
-        np.exp(
-            trial[
-                np.argmin(
-                    [chi2(H_RATES, TEMPERATURES, np.exp(spline(x))) for x in trial]
-                )
-            ]
-        )
+def fit_hydrogen(*, optimized: bool) -> FrictionFit:
+    """Fit a single friction gamma to the measured slow rates."""
+    return fit_frictions(
+        build_bands(M_H, optimized=optimized), M_H, TEMPERATURES, H_RATES, GAMMAS
     )
-    (curve,) = rates(bands, M_H, TEMPERATURES, [gamma])
-    return FrictionFit(curve=curve, chi2=chi2(H_RATES, TEMPERATURES, curve.slow))
 
 
 def _main() -> None:
-    for degenerate, title in (
-        (True, "symmetric hollows"),
-        (False, "raw DFT, hcp +16.9 meV"),
+    fits = {
+        name: fit_hydrogen(optimized=name == "optimized")
+        for name in ("DFT", "optimized")
+    }
+    fig, ax = get_fancy_figure()
+    for data, color, label in (
+        (H_RATES, CAM_CHERRY.dark, "Zhu, slow"),
+        (H_FAST_RATES, CAM_CHERRY.warm, "Zhu, fast"),
     ):
-        fit = fit_hydrogen(degenerate=degenerate)
-        name = "symmetric" if degenerate else "raw"
-        print(f"H, {name}: gamma = {fit.curve.gamma:.3f} ps^-1, chi2 = {fit.chi2:.1f}")
-        plot_against_experiment(
-            fit.curve,
-            H_RATES,
-            rf"H/Ni(111), {title}, $\chi^2 = {fit.chi2:.1f}$",
-            f"examples/hydrogen.rates.{name}.pdf",
+        _, _, points = plot_experimental_rates(data, ax=ax)
+        points.set_label(label)
+        for artist in points.lines[0], *points.lines[2]:
+            artist.set_color(color)
+    points.lines[0].set_markerfacecolor("none")  # fast rates: open circles
+    for (name, fit), color in zip(
+        fits.items(), (CAM_BLUE.dark, CAM_BLUE.warm), strict=True
+    ):
+        gamma = fit.curve.friction.gamma
+        print(f"H, {name} PES: gamma = {gamma:.3f} ps^-1, chi2 = {fit.chi2:.1f}")
+        _, _, slow = plot_rate_arrhenius(fit.curve.temperatures, fit.curve.slow, ax=ax)
+        slow.set(
+            color=color,
+            label=rf"{name} PES, $\gamma = {gamma:.2f}$ ps$^{{-1}}$, $\chi^2 = {fit.chi2:.1f}$",
         )
+        _, _, fast = plot_rate_arrhenius(fit.curve.temperatures, fit.curve.fast, ax=ax)
+        fast.set(color=color, linestyle="--")
+    ax.legend(loc="lower left", fontsize=6)
+    ax.set_title("H/Ni(111), single friction (solid: slow, dashed: fast)", fontsize=9)
+    fig.savefig("examples/hydrogen.rates.pdf")
 
 
 if __name__ == "__main__":

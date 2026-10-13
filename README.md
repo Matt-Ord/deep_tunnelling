@@ -13,12 +13,14 @@ Cambridge, 2015).
 ## Examples
 
 ```bash
-uv run python examples/hydrogen.py     # fit the friction to the H data
-uv run python examples/deuterium.py    # D with the same friction coefficient
-uv run python examples/convergence.py  # convergence in supercell size
+uv run python examples/hydrogen.py                  # fit the friction to the H data
+uv run python examples/hydrogen_ground_friction.py  # add a separate fcc <-> hcp ground-state friction
+uv run python examples/deuterium.py                 # D with the same friction coefficients
+uv run python examples/convergence.py               # convergence in supercell size
 ```
 
-Results are cached in `examples/data/` and figures written to `examples/*.pdf`.
+Shared fitting helpers are in `examples/util.py`. Results are cached in
+`examples/data/` and figures written to `examples/*.pdf`.
 
 ## Development
 
