@@ -1,167 +1,216 @@
-"""H-Ni(111) potential energy surface.
+"""Potential energy surface of H on a close-packed metal surface, interpolated from DFT.
 
-The DFT data (M. Sacchi) is sampled at the six symmetry-distinct points of the
-irreducible triangle (top, fcc, hcp, bridge, top-fcc, top-hcp) at 9 heights.
-In each plane we fit the six lowest C3v-invariant Fourier "star" functions,
-which reproduce the six site energies exactly, and interpolate the coefficients
-in z with a cubic spline. Large repulsive energies are log-compressed before
-fitting (and expanded afterwards) so that the top-site wall at small z does not
-cause ringing in the Fourier series. The hcp hollow lies 16.9 meV above fcc.
+The DFT energies are sampled at a few in-plane points of the irreducible triangle
+(H/Ni(111): 6 sites; H/Pt(111), H/Ru(0001): 31 points), each at a set of heights.
+They are interpolated with C3v-invariant plane-wave "stars" (symmetric_stars), with
+z measured from the local equilibrium height h(u, v):
 
-Two optional corrections tune the PES to experiment (from_dft):
-splitting_scale multiplies the fcc/hcp-antisymmetric (sine) stars, which moves
-the hollows apart, and bridge_shift adds a star combination that is 1 at the
-bridge and 0, with zero curvature, at both hollows (and 0 at the top site), so
-it changes the barrier but not the hollow energies or harmonic frequencies.
+    V(u, v, z) = expand(sum_s c_s(z - h(u, v)) f_s(u, v)),
 
-Fractional coordinates (u, v) refer to r = u a1 + v a2 with
-a1 = a (1, 0), a2 = a (1/2, sqrt(3)/2), the top Ni atom at the origin.
+where h is a star fit of the height of the minimum at each point and c_s(dz) is a
+cubic spline of the star coefficients of the compressed energies at each dz. The
+height matters because H sits ~0.6 A higher on the top site than in the hollows:
+at fixed z the hollow wells lie next to the multi-eV wall of the top site, which
+rings through the Fourier series (into spurious minima, for 31 points). Energies
+are capped at v_cap and log-compressed before fitting for the same reason.
+
+One correction tunes the PES to experiment: splitting_scale multiplies the stars
+odd under the fcc <-> hcp mirror, which moves the hollows apart (> 1) or together
+(< 1) and leaves the barrier and the top site unchanged.
+
+Fractional coordinates (u, v) refer to r = u a1 + v a2 with a1 = a (1, 0),
+a2 = a (1/2, sqrt(3)/2), a top atom at the origin, fcc at (1/3, 1/3) and hcp at
+(2/3, 2/3).
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import scipy.interpolate
 
-from deep_tunnelling.units import A_NI, MEV
+from deep_tunnelling.units import MEV
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-# fractional coordinates of the six sampled sites
-SITES: dict[str, tuple[float, float]] = {
-    "top": (0.0, 0.0),
-    "fcc": (1 / 3, 1 / 3),
-    "hcp": (2 / 3, 2 / 3),
-    "bridge": (0.0, 0.5),
-    "top_fcc": (1 / 6, 1 / 6),
-    "top_hcp": (5 / 6, 1 / 3),
-}
+Array = np.ndarray[Any, Any]
 
 # compression scale for the log transform, meV
 _B = 2500.0
 
-# the stars odd under the fcc <-> hcp mirror, which carry the hollow splitting
-_SINE_STARS = [2, 5]
-# |G|^2 of each star in units of |b|^2: each star is a single shell
-_SHELLS = np.array([0.0, 1.0, 1.0, 3.0, 4.0, 4.0])
 
-
-def _compress(v: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+def _compress(v: Array) -> Array:
     return _B * np.log1p(v / _B)
 
 
-def _expand(t: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+def _expand(t: Array) -> Array:
     return _B * np.expm1(t / _B)
 
 
-def star_functions(
-    u: np.ndarray[Any, Any], v: np.ndarray[Any, Any]
-) -> np.ndarray[Any, Any]:
-    """Return the six lowest C3v-invariant plane-wave stars, shape (6, *u.shape)."""
-    p = 2 * np.pi
-    return np.array(
-        [
-            np.ones_like(u),
-            np.cos(p * u) + np.cos(p * v) + np.cos(p * (u + v)),
-            np.sin(p * u) + np.sin(p * v) - np.sin(p * (u + v)),
-            np.cos(p * (u - v)) + np.cos(p * (2 * u + v)) + np.cos(p * (u + 2 * v)),
-            np.cos(2 * p * u) + np.cos(2 * p * v) + np.cos(2 * p * (u + v)),
-            np.sin(2 * p * u) + np.sin(2 * p * v) - np.sin(2 * p * (u + v)),
-        ]
-    )
+# a star: "cos" or "sin" and the orbit of reciprocal indices (m, n), G = m b1 + n b2
+Star = tuple[str, tuple[tuple[int, int], ...]]
+
+# C3v about the top site acting on fractional (u, v): the 120 degree rotation
+# (a1 -> a2 - a1, a2 -> -a1) and the mirror u <-> v through top, fcc and hcp
+C3V = [
+    np.linalg.matrix_power(np.array([[-1, -1], [1, 0]]), k) @ m
+    for k in range(3)
+    for m in (np.eye(2, dtype=int), np.array([[0, 1], [1, 0]]))
+]
 
 
-def _site_of(x: float, y: float) -> str:
-    v = y / (A_NI * np.sqrt(3) / 2)
-    u = x / A_NI - v / 2
-    for name, (su, sv) in SITES.items():
-        du, dv = (u - su) % 1, (v - sv) % 1
-        if min(du, 1 - du) < 1e-3 and min(dv, 1 - dv) < 1e-3:  # noqa: PLR2004
-            return name
-    msg = f"unknown site at {x}, {y}"
-    raise ValueError(msg)
+def _shell(star: Star) -> int:
+    """|G|^2 of a star in units of |b|^2 (b1 . b2 = -|b|^2 / 2)."""
+    m, n = star[1][0]
+    return m * m + n * n - m * n
 
 
-def load_site_curves(
-    path: Path,
-) -> tuple[np.ndarray[Any, Any], dict[str, np.ndarray[Any, Any]]]:
-    """Load raw DFT data as V(z) at each site, in meV relative to the global minimum, z in A."""
+def symmetric_stars(count: int) -> list[Star]:
+    """Return the count lowest C3v-invariant stars, ordered by |G|^2 and cosine before sine.
+
+    Sine stars are odd under the fcc <-> hcp mirror.
+    """
+    n_max = int(np.sqrt(count)) + 2
+    seen: set[tuple[int, int]] = set()
+    stars: list[Star] = []
+    for m in range(-n_max, n_max + 1):
+        for n in range(-n_max, n_max + 1):
+            if (m, n) in seen:
+                continue
+            # G transforms with the inverse transpose of the action on (u, v)
+            images = (np.linalg.inv(g).T.round() @ (m, n) for g in C3V)
+            orbit = tuple(sorted({(int(a), int(b)) for a, b in images}))
+            seen |= set(orbit) | {(-a, -b) for a, b in orbit}
+            stars.append(("cos", orbit))
+            if (-m, -n) not in orbit:  # otherwise the sine sum vanishes
+                stars.append(("sin", orbit))
+    stars.sort(key=lambda s: (_shell(s), s[0]))
+    return stars[:count]
+
+
+def evaluate_stars(stars: list[Star], u: Array | float, v: Array | float) -> Array:
+    """Values of the stars at fractional (u, v), shape (len(stars), *u.shape)."""
+    u, v = np.broadcast_arrays(np.asarray(u, dtype=float), np.asarray(v, dtype=float))
+    out = np.zeros((len(stars), *u.shape))
+    for i, (kind, orbit) in enumerate(stars):
+        trig = np.cos if kind == "cos" else np.sin
+        for m, n in orbit:
+            out[i] += trig(2 * np.pi * (m * u + n * v))
+    return out
+
+
+def load_points(path: Path, a: float) -> tuple[Array, Array, Array]:
+    """Load DFT energies at in-plane points (raw_data.json format, SI units).
+
+    Returns fractional (u, v) of each point (shape (n, 2), top site at the origin,
+    lattice constant a in A), the heights z (A) and V (meV, (n, nz)) relative to
+    the global minimum.
+    """
     data = json.loads(path.read_text(encoding="utf-8"))
     x = np.asarray(data["x_points"]) * 1e10
     y = np.asarray(data["y_points"]) * 1e10
     z = np.asarray(data["z_points"]) * 1e10
     e = np.asarray(data["points"]) / MEV
     e -= e.min()
+    xy = sorted(set(zip(x.tolist(), y.tolist(), strict=True)))
     z_c = np.unique(z)
-    curves: dict[str, np.ndarray[Any, Any]] = {}
-    for xi, yi in sorted(set(zip(x.tolist(), y.tolist(), strict=True))):
+    energies = np.empty((len(xy), len(z_c)))
+    for i, (xi, yi) in enumerate(xy):
         mask = (x == xi) & (y == yi)
-        order = np.argsort(z[mask])
-        curves[_site_of(xi, yi)] = e[mask][order]
-    return z_c, curves
+        energies[i] = e[mask][np.argsort(z[mask])]
+    xy_a = np.array(xy)
+    v = xy_a[:, 1] / (a * np.sqrt(3) / 2)
+    return np.array([xy_a[:, 0] / a - v / 2, v]).T, z_c, energies
 
 
-def _bridge_star() -> np.ndarray[Any, Any]:
-    """Star coefficients of g: 1 at the bridge, 0 at top, fcc and hcp, zero Laplacian at fcc and hcp."""
-    b2 = (4 * np.pi / (np.sqrt(3) * A_NI)) ** 2
-    rows, rhs = [], []
-    stars = {
-        name: star_functions(np.array(u), np.array(v)) for name, (u, v) in SITES.items()
-    }
-    for site, value in (("bridge", 1.0), ("top", 0.0), ("fcc", 0.0), ("hcp", 0.0)):
-        rows.append(stars[site])
-        rhs.append(value)
-    for site in ("fcc", "hcp"):
-        rows.append(-b2 * _SHELLS * stars[site])
-        rhs.append(0.0)
-    return np.linalg.solve(np.array(rows, dtype=float), np.array(rhs))
+def _minimum(spline: scipy.interpolate.CubicSpline, z: Array) -> float:
+    """Height of the minimum of a spline V(z) within the data range."""
+    fine = np.linspace(z[0], z[-1], 2501)
+    return float(fine[np.argmin(spline(fine))])
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class SurfacePotential:
-    """Smooth periodic H-Ni(111) PES built from the six-site DFT data."""
+    """Periodic PES fitted to DFT energies at in-plane points (module docstring)."""
 
-    z_points: np.ndarray[Any, Any]
-    coefficients: np.ndarray[Any, Any]  # (6, nz) star coefficients of compressed V
-    # (6,) star coefficients added to V (meV), independent of z
-    correction: np.ndarray[Any, Any] = field(default_factory=lambda: np.zeros(6))
-    v_cap: float = 4000.0  # meV, energies above this are irrelevant for low states
+    stars: list[Star]
+    height_stars: list[Star]
+    dz_points: Array
+    coefficients: Array  # (len(stars), len(dz_points)), of the compressed V
+    height_coefficients: Array  # (len(height_stars),)
+    v_cap: float = 4000.0  # meV, energies above this are irrelevant for the low states
 
     @classmethod
-    def from_dft(
-        cls, path: Path, *, splitting_scale: float = 1.0, bridge_shift: float = 0.0
+    def from_points(  # noqa: PLR0913
+        cls,
+        uv: Array,
+        z: Array,
+        energies: Array,
+        *,
+        n_stars: int = 25,
+        n_height_stars: int = 20,
+        ridge: float = 1e-7,
+        dz_step: float = 0.05,
+        v_cap: float = 4000.0,
+        splitting_scale: float = 1.0,
     ) -> SurfacePotential:
-        """Build the PES from the DFT site curves, with the optional corrections above.
+        """Fit the stars to energies (meV, (n_points, nz)) at fractional uv and heights z (A).
 
-        bridge_shift is in meV (negative lowers the barrier).
+        At most one star per point is used, so six sites are fitted exactly.
+        ridge damps high stars by ridge |G|^4.
         """
-        z, curves = load_site_curves(path)
-        names = list(SITES)
-        uv = np.array([SITES[n] for n in names])
-        basis = star_functions(uv[:, 0], uv[:, 1]).T  # (site, star)
-        values = np.array([_compress(curves[n]) for n in names])  # (site, nz)
-        coefficients = np.linalg.solve(basis, values)
-        coefficients[_SINE_STARS] *= splitting_scale
+        n_stars, n_height_stars = min(n_stars, len(uv)), min(n_height_stars, len(uv))
+        splines = [scipy.interpolate.CubicSpline(z, row) for row in energies]
+        heights = np.array([_minimum(s, z) for s in splines])
+        # every dz covered by the data at some point; beyond its own data each
+        # point is held at its end value
+        lo, hi = z[0] - heights.max(), z[-1] - heights.min()
+        dz = np.linspace(lo, hi, round((hi - lo) / dz_step) + 1)
+        stars, height_stars = symmetric_stars(n_stars), symmetric_stars(n_height_stars)
+        basis = evaluate_stars(stars, uv[:, 0], uv[:, 1]).T
+        height_basis = evaluate_stars(height_stars, uv[:, 0], uv[:, 1]).T
+        height_coefficients = np.linalg.lstsq(height_basis, heights)[0]
+        # energies above v_cap are irrelevant and only drive ringing: cap, then compress
+        values = np.array(
+            [
+                _compress(np.minimum(s(np.clip(dz + h, z[0], z[-1])), v_cap))
+                for s, h in zip(splines, heights, strict=True)
+            ]
+        )
+        shells = np.array([_shell(s) for s in stars], dtype=float)
+        coefficients = np.linalg.solve(
+            basis.T @ basis + ridge * np.diag(shells**2), basis.T @ values
+        )
+        coefficients[[kind == "sin" for kind, _ in stars]] *= splitting_scale
         return cls(
-            z_points=z,
+            stars=stars,
+            height_stars=height_stars,
+            dz_points=dz,
             coefficients=coefficients,
-            correction=bridge_shift * _bridge_star(),
+            height_coefficients=height_coefficients,
+            v_cap=v_cap,
         )
 
-    def __call__(
-        self, u: np.ndarray[Any, Any], v: np.ndarray[Any, Any], z: np.ndarray[Any, Any]
-    ) -> np.ndarray[Any, Any]:
-        """Evaluate V (meV) at fractional (u, v) and height z (A); arrays broadcast."""
-        spline = scipy.interpolate.CubicSpline(self.z_points, self.coefficients, axis=1)
-        u, v, z = np.broadcast_arrays(u, v, z)
-        c = spline(z.ravel()).reshape(6, *z.shape)
-        stars = star_functions(u, v)
-        t = np.einsum("s...,s...->...", c, stars)
-        return np.minimum(
-            _expand(t) + np.einsum("s,s...->...", self.correction, stars), self.v_cap
+    def height(self, u: Array, v: Array) -> Array:
+        """Equilibrium height h(u, v) (A)."""
+        return np.einsum(
+            "s,s...->...",
+            self.height_coefficients,
+            evaluate_stars(self.height_stars, u, v),
         )
+
+    def __call__(self, u: Array, v: Array, z: Array) -> Array:
+        """Evaluate V (meV) at fractional (u, v) and height z (A); arrays broadcast."""
+        u, v, z = np.broadcast_arrays(u, v, z)
+        # flat beyond the fitted range, where V is far above the low states
+        dz = np.clip(z - self.height(u, v), self.dz_points[0], self.dz_points[-1])
+        spline = scipy.interpolate.CubicSpline(
+            self.dz_points, self.coefficients, axis=1
+        )
+        c = spline(dz.ravel()).reshape(len(self.stars), *z.shape)
+        t = np.einsum("s...,s...->...", c, evaluate_stars(self.stars, u, v))
+        return np.minimum(_expand(t), self.v_cap)

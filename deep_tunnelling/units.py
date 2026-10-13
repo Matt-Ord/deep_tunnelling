@@ -11,6 +11,3 @@ KB = sc.Boltzmann / MEV  # meV / K
 _MASS_UNIT = MEV * 1e-24 / 1e-20
 M_H = 1.00782503207 * sc.atomic_mass / _MASS_UNIT
 M_D = 2.01410177812 * sc.atomic_mass / _MASS_UNIT
-
-# Ni(111) surface lattice constant (nearest-neighbor Ni-Ni distance), A
-A_NI = 2.4890158697766473

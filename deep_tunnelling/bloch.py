@@ -1,15 +1,17 @@
-"""Bloch eigenstates of H on Ni(111).
+"""Bloch eigenstates of H on a close-packed metal surface.
 
 The unit cell (hexagonal, lattice constant a) is sampled on an N1 x N2 grid in
-fractional coordinates and an Nz grid over the z range of the DFT data, which
-is treated as periodic (the potential is > 1 eV at both ends so the low states
+fractional coordinates and an Nz grid over a z range of the DFT data, which is
+treated as periodic (the potential is > 1 eV at both ends so the low states
 vanish there). For crystal momentum k the periodic part u_k of the Bloch state
 satisfies [hbar^2 (-i grad + k)^2 / 2m + V] u_k = E u_k.
 
-The fast z vibrations are removed first: the 1D problem T_z + V(fcc, z) is
-diagonalized once and z is contracted onto its lowest n_z states (6 reproduce
-the full grid to ~1e-3 meV). The in-plane kinetic energy is applied with FFTs
-and the n1 x n2 x n_z Hamiltonian is diagonalized with Lanczos.
+The fast z vibrations are removed first: the 1D problem T_z + min_xy V(x, y, z)
+is diagonalized once and z is contracted onto its lowest n_z states. The lower
+envelope min_xy V covers the hollows and the top site, which sits ~0.6 A higher
+(a basis on V(fcc, z) alone misses the top-site states). The in-plane kinetic
+energy is applied with FFTs and the n1 x n2 x n_z Hamiltonian is diagonalized
+with Lanczos.
 
 An n x n supercell with periodic boundary conditions is equivalent to the
 n x n Monkhorst-Pack grid k = (i b1 + j b2) / n, i, j = 0..n-1.
@@ -19,13 +21,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from fractions import Fraction
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import scipy.sparse.linalg
 from threadpoolctl import threadpool_limits
 
-from deep_tunnelling.units import A_NI, HBAR
+from deep_tunnelling.units import HBAR
 
 if TYPE_CHECKING:
     from deep_tunnelling.potential import SurfacePotential
@@ -37,12 +40,12 @@ KPoint = tuple[Fraction, Fraction]
 class Grid:
     """Real-space grid of the unit cell."""
 
+    a: float  # surface lattice constant, A
     n1: int = 18
     n2: int = 18
     nz: int = 28
     z_min: float = -1.0
     z_max: float = 1.2
-    a: float = A_NI
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -61,7 +64,8 @@ class Grid:
         a2 = np.array([0.5, np.sqrt(3) / 2]) * self.a
         return 2 * np.pi * np.linalg.inv(np.array([a1, a2])).T
 
-    def fractional(
+    @cached_property
+    def coordinates(
         self,
     ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
         """Fractional in-plane coordinates (u, v) and z (A) of every grid point."""
@@ -70,6 +74,7 @@ class Grid:
         z = self.z_min + np.arange(self.nz) * self.lz / self.nz
         return np.meshgrid(u, v, z, indexing="ij")  # type: ignore[return-value]
 
+    @cached_property
     def g_vectors(
         self,
     ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
@@ -92,9 +97,9 @@ class BlochSolver:
 
     potential: SurfacePotential
     mass: float
-    grid: Grid = field(default_factory=Grid)
+    grid: Grid
     n_states: int = 48  # bands per k for the Lamb shift (converged to ~0.4%)
-    n_z: int = 6  # z states kept from the 1D problem at the fcc site
+    n_z: int = 6  # z states kept from the 1D problem on the lower envelope
     _g_xy: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] = field(
         init=False, repr=False
     )
@@ -105,11 +110,12 @@ class BlochSolver:
     )
 
     def __post_init__(self) -> None:
-        u, v, z = self.grid.fractional()
-        gx, gy, gz = self.grid.g_vectors()
+        u, v, z = self.grid.coordinates
+        gx, gy, gz = self.grid.g_vectors
         self._g_xy = (gx[:, :, 0], gy[:, :, 0])
         gz = gz[0, 0]
-        # pre-diagonalize H_z = T_z + V(fcc, z) and project V(x, y, z) onto its lowest states
+        # pre-diagonalize H_z = T_z + min_xy V(z) and project V(x, y, z) onto its lowest states
+        potential = self.potential(u, v, z)
         nz = self.grid.nz
         kinetic = np.fft.ifft(
             HBAR**2
@@ -118,14 +124,12 @@ class BlochSolver:
             * np.fft.fft(np.eye(nz), axis=0),
             axis=0,
         ).real
-        v_fcc = self.potential(np.full(nz, 1 / 3), np.full(nz, 1 / 3), z[0, 0])
-        self._phi = np.linalg.eigh(kinetic + np.diag(v_fcc))[1][
+        self._phi = np.linalg.eigh(kinetic + np.diag(potential.min(axis=(0, 1))))[1][
             :, : self.n_z
         ]  # (nz, n_z), real
         h_z = self._phi.T @ kinetic @ self._phi  # same at every (x, y)
         self._local = (
-            np.einsum("zi,xyz,zj->xyij", self._phi, self.potential(u, v, z), self._phi)
-            + h_z
+            np.einsum("zi,xyz,zj->xyij", self._phi, potential, self._phi) + h_z
         )  # (n1, n2, n_z, n_z)
 
     def _solve(self, k: KPoint) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
@@ -181,7 +185,7 @@ class BlochSolver:
             # so u_k = exp(-i G.r) conj(u_m) with G = k + m
             e, u = self._cache[minus]
             g = (int(k[0] + minus[0]), int(k[1] + minus[1]))
-            uu, vv, _ = self.grid.fractional()
+            uu, vv, _ = self.grid.coordinates
             result = (e, u.conj() * np.exp(-2j * np.pi * (g[0] * uu + g[1] * vv)))
         else:
             result = self._solve(k)

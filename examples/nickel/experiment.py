@@ -12,17 +12,11 @@ fast-rate range is the slow-rate range times lambda.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
-from deep_tunnelling.plot import get_figure, set_arrhenius_axes
 from deep_tunnelling.units import KB
-
-if TYPE_CHECKING:
-    from matplotlib.axes import Axes
-    from matplotlib.container import ErrorbarContainer
-    from matplotlib.figure import Figure
 
 Array = np.ndarray[Any, Any]
 
@@ -109,19 +103,6 @@ H_FAST_RATES = np.array(
 # fcc-hcp energy difference from the T dependence of the fast/slow ratio, meV;
 # implies the fast rates of D, for which the ratio was not measured
 DELTA_E_HOLLOW = 19.0
-
-
-def plot_experimental_rates(
-    data: Array, *, ax: Axes | None = None
-) -> tuple[Figure, Axes, ErrorbarContainer]:
-    """Plot Zhu's HeSE rates (columns T, rate, low, high) against 1000 / T."""
-    fig, ax = get_figure(ax)
-    t, r, lo, hi = np.asarray(data).T
-    container = ax.errorbar(
-        1000 / t, r, yerr=[r - lo, hi - r], linestyle="", marker="o", markersize=4
-    )
-    set_arrhenius_axes(ax)
-    return fig, ax, container
 
 
 def implied_fast_rates(data: Array) -> Array:

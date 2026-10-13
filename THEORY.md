@@ -1,9 +1,11 @@
 # Theory
 
-This package computes hop rates of H and D on Ni(111) from a Markovian open-system
+This package computes hop rates of H and D on close-packed metal surfaces (Ni(111),
+Pt(111), Ru(0001)) from a Markovian open-system
 master equation, the *universal* Caldeira–Leggett master equation (UME), evaluated
 in the Bloch eigenbasis of a three-dimensional periodic potential energy surface,
-and compares them with helium spin-echo (HeSE) measurements.
+and compares them with helium spin-echo (HeSE) measurements. This document
+describes the method; fitted values are printed by the examples.
 
 The pipeline is
 
@@ -39,21 +41,24 @@ $\hbar = 0.6582$ meV ps and $\hbar^2/2m_\mathrm{H} = 2.074$ meV Å².
 
 ### 1.1 DFT data
 
-The PES is built from DFT total energies of a single H atom on a Ni(111) slab
-(M. Sacchi; CASTEP, spin-polarized PBE, 2×2 cell, 5 layers), the same data
-behind the band structure of [JZ] §4.5.1 (p. 68). The energies (`examples/raw_data.json`)
-are sampled at the six symmetry-distinct points of the irreducible triangle:
-top, fcc, hcp, bridge and the top–fcc and top–hcp midpoints, each at nine heights
-$-1.0 \le z \le 1.2$ Å, with $z = 0$ the global minimum. In fractional coordinates
-$\mathbf r = u\,\mathbf a_1 + v\,\mathbf a_2$, with $\mathbf a_1 = a(1,0)$,
-$\mathbf a_2 = a(\tfrac12, \tfrac{\sqrt3}{2})$, $a = 2.489$ Å and a top Ni atom at the
-origin, the sites are fcc $(\tfrac13,\tfrac13)$, hcp $(\tfrac23,\tfrac23)$ and bridge
-$(0,\tfrac12)$.
+The PES is built from DFT total energies of a single H atom on a metal slab, sampled
+at points of the irreducible triangle of the (111)/(0001) surface at a set of
+heights (`raw_data.json` in each example folder, with $z = 0$ at the global
+minimum). For Ni(111) these are the six symmetry-distinct sites, top, fcc, hcp,
+bridge and the top–fcc and top–hcp midpoints; for Pt(111) and Ru(0001), 31 points
+on a 1/12 grid of the cell. The provenance of each data set is in its example's
+`util.py`. In
+fractional coordinates $\mathbf r = u\,\mathbf a_1 + v\,\mathbf a_2$, with $\mathbf a_1 = a(1,0)$,
+$\mathbf a_2 = a(\tfrac12, \tfrac{\sqrt3}{2})$ and a top atom at the origin, the sites are
+fcc $(\tfrac13,\tfrac13)$, hcp $(\tfrac23,\tfrac23)$ and bridge $(0,\tfrac12)$, and $a$ is the
+lattice constant of the DFT slab.
 
 ### 1.2 Interpolation
 
-The $C_{3v}$ symmetry of the surface leaves exactly six independent plane-wave
-"stars" up to the third reciprocal-lattice shell:
+The in-plane dependence is expanded in $C_{3v}$-invariant plane-wave "stars"
+(`symmetric_stars`), sums of $\cos\mathbf G\cdot\mathbf r$ or $\sin\mathbf G\cdot\mathbf r$ over the
+orbit of a reciprocal-lattice vector $\mathbf G$, ordered by $|\mathbf G|^2$. The lowest six
+are
 
 $$
 \begin{aligned}
@@ -68,33 +73,43 @@ $$
 
 where $\sum_3 \cos 2\pi(\cdot)$ means $\cos 2\pi u + \cos 2\pi v + \cos 2\pi(u+v)$. The
 cosine stars are symmetric under the mirror that exchanges fcc and hcp; the sine
-stars $g_1, g_3$ are antisymmetric and carry the fcc–hcp energy difference. At each
-height the six coefficients are fixed by the six site energies, so the fit is exact
-at the data points. The coefficients are then interpolated in $z$ with a cubic spline.
+stars are antisymmetric and carry the fcc–hcp energy difference.
 
-The top site is strongly repulsive at small $z$ (1.4 keV at $z = -1$ Å). To stop
-this from ringing through the Fourier series the energies are compressed before
-fitting, $T(V) = B\ln(1 + V/B)$ with $B = 2.5$ eV, and expanded afterwards; energies
-above 4 eV are capped, which does not affect any state below the barrier.
+H sits higher on the top site than in the hollows (~0.6 Å), so at the hollow
+height the top site is a wall of several eV. Fitted at fixed z, this wall leaks through the Fourier
+series into the hollows, and with 31 points rings into spurious minima.
+`SurfacePotential` therefore measures z from the local equilibrium height,
 
-### 1.3 Band structure
+$$
+V(u,v,z) = \mathrm{expand}\Big[\sum_s c_s\big(z - h(u,v)\big)\,f_s(u,v)\Big],
+$$
 
-The PES is the DFT as computed, with hcp 16.9 meV above fcc at the minima. It
-reproduces the band structure of [JZ] Table 4.3 (p. 72) closely:
-hcp–fcc ground-state splitting 12.9 meV (12.7), parallel vibration 84.2 meV (82.2),
-perpendicular 115.0 meV (117.4), and ground-band width $4\times10^{-4}$ meV
-($5\times10^{-4}$). Only the zero-point energy differs by a constant ~10 meV.
+with $h$ a star fit to the height of the minimum at each point and, at each
+$\delta z$ on a 0.05 Å grid, $c_s(\delta z)$ a least-squares fit of the stars to the
+energies at $z = h_i + \delta z$ (each point held at its end value beyond its own data),
+splined in $\delta z$. At most one star per point is used (6 points: exact at the
+sites; 31 points: 25 stars and 20 for $h$, with a ridge $10^{-7}|\mathbf G|^4$). Energies are
+capped at 4 eV, which does not affect any state below the barrier, and compressed
+before fitting, $T(V) = B\ln(1 + V/B)$ with $B = 2.5$ eV.
 
-### 1.4 Optimized PES
+### 1.3 Benchmark
 
-`SurfacePotential.from_dft(path, splitting_scale=..., bridge_shift=...)` adds two
-z-independent star corrections (`util.OPTIMIZED_PES` in the examples):
-`splitting_scale` multiplies the fcc/hcp-antisymmetric stars $g_1, g_3$, and
-`bridge_shift` (meV) adds the star combination that is 1 at the bridge and 0, with
-zero curvature, at both hollows (and 0 at top). They are fitted to the two H
-observables that probe the PES rather than the friction: the hcp–fcc ground-state
-splitting (19.0 meV, from the fast/slow ratio) and the activation energy above
-170 K (97.7 meV, nearly independent of γ). D is not used.
+The 31-point data sets unfold by symmetry onto a full 12 × 12 grid of the cell,
+which a local tricubic spline interpolates without any Fourier series (cubic in z
+per column, a periodic cubic B-spline in $(u,v)$ at each z, on the same capped,
+compressed energies; `test_potential_matches_local_spline`). Below 400 meV the
+star fit agrees with it to a few meV, and the H bands to a fraction of a meV.
+
+Six sites do not fix the interpolation between them: fitted to the six Ni-type
+sites of the 31-point data, either the height-following or a fixed-z star fit
+lowers the H in-plane excitation by ~10% and the zero-point energy by ~20 meV
+against the spline. This is a limit of six-site data, not of the scheme.
+
+### 1.4 Correction
+
+`splitting_scale` multiplies the fcc/hcp-antisymmetric (sine) stars, which moves
+hcp relative to fcc and leaves the barrier and the top site unchanged. It is the
+one correction applied to a PES; how it is chosen is described in §7.2.
 
 ---
 
@@ -114,22 +129,24 @@ $$
 
 the same block structure as [MO] Eqs. 3.17–3.20 (pp. 31–32). Each block is solved
 on an $18\times18$ grid of the unit cell, with the kinetic energy applied by FFT. The
-$z$ direction is periodic over the 2.2 Å range of the data; the potential exceeds
+$z$ direction is periodic over a range of the data where the potential exceeds
 1 eV at both ends, so the low states vanish there.
 
 ### 2.2 Contracted z basis
 
 The fast $z$ vibrations are removed before diagonalizing. The 1D problem
-$T_z + V(\mathrm{fcc}, z)$ is solved once on 28 points and $z$ is projected onto its
-lowest $n_z = 6$ states $\phi_i(z)$. The 3D Hamiltonian then acts on
-$18\times18\times6$ coefficients:
+$T_z + \min_{u,v}V(u,v,z)$ is solved once on the z grid and $z$ is projected onto its
+lowest $n_z$ states $\phi_i(z)$. The lower envelope $\min_{u,v}V$ follows the hollows
+at small z and the top site above it; a basis on $V(\mathrm{fcc}, z)$ alone misses the
+top-site states, which matters where they are low (Pt(111)). The 3D Hamiltonian
+then acts on $18\times18\times n_z$ coefficients:
 
 $$
 H_{ij}(\mathbf r_\parallel) = \langle\phi_i|T_z|\phi_j\rangle + \langle\phi_i|V(\mathbf r_\parallel, z)|\phi_j\rangle ,
 $$
 
 plus the in-plane kinetic energy. The lowest 48 states per $\mathbf k$ are found by
-Lanczos (`eigsh`). Six $z$ states reproduce the full-grid energies to ~$10^{-3}$ meV.
+Lanczos (`eigsh`).
 
 ### 2.3 Time reversal
 
@@ -220,8 +237,8 @@ For hopping, the fastest of these is not γ. It is the dephasing of a superposit
 of two neighboring hollows a distance $d = a/\sqrt3 = 1.44$ Å apart,
 $\Gamma_\phi = \eta d^2 k_BT/\hbar^2$, which is $\approx 5\gamma$ at 120 K for H. The condition
 $\Gamma_\phi \ll k_BT/\hbar$ is therefore $\eta d^2/\hbar = 2\pi\alpha \ll 1$, independent of
-temperature, where α is the spin–boson coupling. For H, $2\pi\alpha \approx 0.33\,\gamma$/ps⁻¹,
-which is ≈0.8 for γ ≈ 2.3 ps⁻¹. This is marginal. [UME] §7.3 already finds a 20% spread between second-order master
+temperature, where α is the spin–boson coupling. For H on Ni(111), $2\pi\alpha \approx 0.33\,\gamma$/ps⁻¹,
+which is of order 1 for the fitted frictions of a few ps⁻¹. This is marginal. [UME] §7.3 already finds a 20% spread between second-order master
 equations at $\alpha \approx 0.02$. This matters for H, where
 $\hbar\omega/k_BT \approx 4$–8 and the standard high-temperature correction (L =
 x + iħp/4mk_BT) fails ([MO] §7.11, Table 7.4).
@@ -304,13 +321,14 @@ Independent estimates for H on close-packed metals lie around γ ≈ 1–2.5 ps�
   (up to ~360 meV), which converges the rates to ~0.4%. This follows [UME] §5.1
   ("$N_\mathrm{big} \ge 2N$").
 * **Master-equation basis**: the Liouvillian keeps every band whose mean energy lies
-  within `MAX_ENERGY` = 150 meV of the ground band, i.e. every band below the barrier
-  (10 bands for H, 16 for D). D needs more: its first vibrational band barely tunnels,
-  so its activated hopping runs through higher bands.
+  within a fixed energy (`max_energy`) of the ground band, about the barrier height.
+  D needs more bands than H: its first vibrational band barely tunnels, so its
+  activated hopping runs through higher bands.
 
-  The cutoff is a fixed energy because activated hopping runs through the bands at
-  85–150 meV at every temperature: a cutoff of $6k_BT$ underestimates the H rate by
-  87% at 160 K (D: 88%), while 150 meV is within 3% (H) and 5% (D) of 20 bands.
+  The cutoff is a fixed energy because activated hopping runs through the bands
+  just below the barrier at every temperature: on Ni(111) a cutoff of $6k_BT$
+  underestimates the H rate by 87% at 160 K. Memory grows as $n^2 n_\mathrm{rate}^4$,
+  which limits it for D.
 
 $H_U$ and $L_U$ are truncated to the master-equation basis, and $L_U^\dagger L_U$ is built
 from the *truncated* $L_U$, so the truncated generator stays exactly trace preserving
@@ -336,7 +354,7 @@ $\mathbf k$.
 
 Every bath term ($S$, $\Gamma$, $H_U$, $L^\dagger L$) is linear in γ, so
 $\mathcal L(\gamma) = \mathcal L_0 + \gamma\,\mathcal L_1$ (plus $\gamma_g\,\mathcal L_g$ for the ground-state
-couplings of §7.3). Each temperature is therefore assembled
+couplings of §7.4). Each temperature is therefore assembled
 once and reused for every friction.
 
 ---
@@ -354,33 +372,26 @@ $$
 $$
 
 The two escape rates follow from detailed balance,
-$k_{\mathrm f\to\mathrm h}\,p_\mathrm f = k_{\mathrm h\to\mathrm f}\,p_\mathrm h$, with the steady-state fcc
-population $p_\mathrm f = \mathrm{Tr}(\rho_\mathrm{ss}P_\mathrm f)$. $P_\mathrm f$ projects onto the region
-of the cell closer to an fcc than an hcp hollow:
+$k_{\mathrm f\to\mathrm h}\,p_\mathrm f = k_{\mathrm h\to\mathrm f}\,p_\mathrm h$, with the steady-state hollow
+populations $p_\mathrm f, p_\mathrm h$. Each eigenstate counts wholly towards the site (fcc,
+hcp or top) nearest most of its weight (`BandData.sites`), so the populations are
+diagonal in the eigenbasis; top states belong to neither hollow (§7.5). With
+$p_\mathrm f + p_\mathrm h$ normalized to 1,
 
 $$
-k_\mathrm{slow} = k_{\mathrm f\to\mathrm h} = -\lambda_1(1 - p_\mathrm f), \qquad
+k_\mathrm{slow} = k_{\mathrm f\to\mathrm h} = -\lambda_1\,p_\mathrm h, \qquad
 k_\mathrm{fast} = k_{\mathrm h\to\mathrm f} = -\lambda_1\,p_\mathrm f .
 $$
 
-These are total escape rates out of a site, summed over its three neighbors. That
-is the quantity [JZ] plots: his "rate" is the slow rate $\nu/\lambda$ of the two-sublattice
-jump model ([JZ] Eqs. 2.34–2.44, pp. 16–18). For degenerate hollows $p_\mathrm f = \tfrac12$
-and the two rates would be equal.
+These are total escape rates out of a site, summed over its three neighbors. For
+degenerate hollows $p_\mathrm f = \tfrac12$ and the two rates would be equal.
 
 ### 6.2 Validity
 
 Describing hopping by one rate needs $\lambda_1$ to be well separated from the next
-eigenvalue, which is intra-site vibrational relaxation at about γ. At $n = 4$:
-
-| | T (K) | $-\lambda_1$ (ps⁻¹) | $-\lambda_2$ (ps⁻¹) | $\lambda_2/\lambda_1$ |
-|---|---|---|---|---|
-| H | 120 | 5.6×10⁻³ | 0.84 | 150 |
-| H | 260 | 3.9×10⁻² | 0.83 | 21 |
-| D | 120 | 1.6×10⁻⁴ | 0.45 | 2788 |
-| D | 260 | 1.2×10⁻² | 0.44 | 36 |
-
-$\lambda_1$ is real at all temperatures, so hopping is incoherent.
+eigenvalue, which is intra-site vibrational relaxation at about γ. For H and D on
+Ni(111) the ratio is ~20–3000, falling with temperature, and $\lambda_1$ is real, so
+hopping is incoherent.
 
 **Limitation.** The k-diagonal sector sees only fcc ↔ hcp exchange. A long jump
 (fcc → fcc) leaves the sublattice populations unchanged and is invisible to
@@ -399,7 +410,7 @@ This is not yet implemented.
   Downhill this gives $\sim 2\eta d^2t^2/\hbar^2\varepsilon$, and uphill an extra
   $e^{-\varepsilon/k_BT}$. The rate grows as γ and is suppressed by the off-resonance
   factor $(t/\varepsilon)^2$, so a single friction fitted to the activated regime gives
-  no plateau (§7.3).
+  no plateau (§7.4).
 * **Activated** (above ~160 K). The bath excites the parallel vibration, whose band is
   wide enough to tunnel between sites before it relaxes. The activation energy is set
   by the hopping band, not by the classical barrier ([UME] §4), and the rate rises
@@ -409,21 +420,44 @@ This is not yet implemented.
 
 ## 7. Comparison with experiment (`examples/`)
 
-### 7.1 Data
+### 7.1 Observables
 
-The measured rates (`examples/experiment.py`) are digitized from [JZ] Fig. 4.21
-(p. 64): HeSE at 0.07 ML, ΔK = 0.8 Å⁻¹ along [11̄2], rescaled to the mid-ΔK plateau
-([JZ] p. 63). They are slow rates. The H fast rates are the slow rates times the
-fast/slow ratio λ fitted at each point ([JZ] Fig. 4.20, extracted from the vector
-graphic; its axis is $\log_{10}\lambda$ although labelled ln; no error bars). Their
-Arrhenius fit gives ΔE = 19.0 ± 1.0 meV ([JZ] §4.4.2), used for D, where λ was not
-measured. Above 165 K, $E_a$ = 97.7 ± 5.2 meV (H) and 99.8 ± 7.4 meV (D); the low-T
-plateau is (2.5–4.4)×10⁻³ ps⁻¹ ([JZ] Table 4.4). Other sources disagree on whether
-D has a plateau, so D is a secondary test.
+HeSE measures the decay of the intermediate scattering function at a momentum
+transfer ΔK. The published analyses reduce it to rates of a jump model, and the
+model's escape rates are mapped onto whichever rate was reported:
 
-### 7.2 Fitting
+* **Two-sublattice rates.** Fits of the non-Bravais fcc/hcp jump model give the
+  escape rate out of fcc (the slow rate) and out of hcp (the fast rate, or the
+  inverse residence time $1/\tau$ in hcp), or their ratio. These are
+  $k_\mathrm{slow}$ and $k_\mathrm{fast}$ (§6.1) directly. For H/Ni(111) [JZ] reports the
+  slow rate and the fast/slow ratio ([JZ] Eqs. 2.34–2.44); for H/Ru(0001)
+  Townsend ([PT] §6.3) reports $1/\tau_\mathrm{hcp}$ and McIntosh *et al.* (2013) the
+  fcc → hcp rate.
+* **Chudley–Elliott rate.** Where hcp is only a short-lived intermediate the data
+  are fitted with fcc → fcc jumps (H/Pt(111), Jardine *et al.* 2010). The model is
+  mapped onto it by equating dephasing rates at the measured ΔK: the slower root
+  of the two-sublattice jump matrix,
+  $\alpha = \tfrac12\left[S - \sqrt{S^2 - 4k_\mathrm{fh}k_\mathrm{hf}(1-|F|^2)}\right]$,
+  $S = k_\mathrm{fh}+k_\mathrm{hf}$, $F$ the mean of $e^{i\Delta\mathbf K\cdot\mathbf d}$ over the three
+  fcc → hcp vectors, is set equal to the Chudley–Elliott form. For $k_\mathrm{hf} \gg k_\mathrm{fh}$,
+  $\Gamma \to \tfrac23 k_\mathrm{fh}$: a third of the hcp visits return.
 
-The frictions are fitted to the H slow rates by minimizing
+The measured rates are extracted from the vector graphics of the published figures
+(each `experiment.py` documents its source).
+
+### 7.2 PES correction
+
+DFT places the hcp hollow too high on some surfaces. `splitting_scale` (§1.4) is
+fixed by experiment independently of the rates where possible: by the measured
+hcp–fcc ground-state splitting of H (from the fast/slow ratio, or from the site
+populations of the jump-model fit). Where no splitting is measured (Pt), it is
+scanned and the scale with the best H fit is taken. The barrier is left at its
+DFT value and the high-temperature activation energy is checked against the data
+rather than fitted.
+
+### 7.3 Fitting
+
+The frictions are fitted to the H rates by minimizing
 
 $$
 \chi^2 = \frac{1}{N}\sum_i \left(\frac{\ln k_\mathrm{model}(T_i) - \ln k_i}{\sigma_i}\right)^2,
@@ -431,12 +465,14 @@ $$
 $$
 
 on a cubic spline of $\ln k$ through a log grid of frictions (`examples/util.py`).
-D uses the H friction coefficient $\eta = m\gamma$ (§4.4) with nothing refitted.
+D uses the H friction coefficient $\eta = m\gamma$ (§4.4) with nothing refitted, so
+it tests the PES and the isotope scaling; a second H data set, where available, is
+compared without fitting.
 
-### 7.3 Ground-state friction
+### 7.4 Ground-state friction
 
 With a single friction the bias suppresses deep tunneling (§6.3), so the model has
-no low-temperature plateau. `examples/hydrogen_ground_friction.py` adds a second set
+no low-temperature plateau. `hydrogen_ground_friction.py` (Ni, Ru) adds a second set
 of couplings: the periodic $\cos(\mathbf q_j\cdot\mathbf r)/q$, $\sin(\mathbf q_j\cdot\mathbf r)/q$ projected onto the two
 ground bands at every $\mathbf k$ (fcc and hcp ground states), coupled to independent
 baths with friction $\gamma_g$, so $\mathcal L = \mathcal L_0 + \gamma\mathcal L_1 + \gamma_g\mathcal L_g$. The projection
@@ -455,21 +491,35 @@ one-boson fcc → hcp transition has matrix element $\approx td/\varepsilon$ and
 couplings that modulate the tunneling or the site energy; a temperature-dependent
 friction cannot raise the biased rate enough; and treating the bath exactly
 (polaron, golden rule in $t$) only lowers the rate. Resonant tunneling between
-degenerate hollows would give a plateau, but the measured fast/slow ratio rules out
-degenerate hollows.
+degenerate hollows would give a plateau, but the measured hollow splittings rule
+this out.
+
+### 7.5 Populations and the exchange mode
+
+Two simplifications of §6.1 can fail when the wells are shallow (Pt(111)):
+
+* **Populations.** The fcc ground state can spill past the fcc/hcp midline, so a
+  projector onto the region nearer hcp would overstate the hcp population.
+  Populations are therefore assigned by eigenstate (§6.1), and top states, which
+  belong to neither hollow, drop out of the detailed balance.
+* **The slowest mode.** A weakly coupled top-site state can relax more slowly than
+  the hollows exchange. The exchange mode is chosen among the six slowest as the
+  one whose population change is closest to fcc ↔ hcp exchange, each hollow in
+  internal equilibrium.
 
 ---
 
 ## 8. Numerical parameters and convergence
 
-| Parameter | Value | Where | Convergence |
+| Parameter | Default | Where | Checked against |
 |---|---|---|---|
-| Real-space grid | 18 × 18 × 28 | `Grid` | 0.01 meV vs 30 × 30 × 44 |
-| z states | 6 | `BlochSolver.n_z` | 10⁻³ meV vs full grid |
-| Lamb-shift bands | 48 per k | `BlochSolver.n_states` | 0.4% vs 72 |
-| Master-equation bands | below 150 meV (10 H, 16 D) | `model.MAX_ENERGY` | ≤3% (H), ≤5% (D) vs 20 bands (§5.1) |
-| Supercell | n = 6 | examples | within 2% of n = 10 (`examples/convergence.py`) |
+| Real-space grid | 18 × 18 × nz | `Grid` | 30 × 30 grids (0.01 meV) |
+| z states | 6 (10 with low top-site states) | `Surface.n_z` | full z grid (≤ 0.1 meV for hollow bands) |
+| Lamb-shift bands | 48 per k | `BlochSolver.n_states` | 72 (0.4%) |
+| Master-equation bands | within `max_energy` of the ground band | `model.rates` | higher cutoffs (§5.1) |
+| Supercell | n = 6 (4 for D where memory requires) | examples | n = 8–10 (`examples/nickel/convergence.py`) |
 
 Convergence in $n$ is slowest at low temperature, where the deep-tunneling rate is
 sensitive to how closely the periodic coupling approaches linear coupling ($q\,\Delta x \ll 1$).
-At 250 K the rate is converged already at $n = 2$.
+The cutoffs and grids used for each surface, with their convergence, are recorded
+in its `util.py`.

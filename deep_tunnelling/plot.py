@@ -11,6 +11,7 @@ from cycler import cycler
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
+    from matplotlib.container import ErrorbarContainer
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
 
@@ -132,3 +133,16 @@ def plot_convergence(
     ax.set_xlabel(r"Supercell size $n$")
     ax.set_ylabel(rf"Rate / rate($n = {sizes[-1]}$)")
     return fig, ax, line
+
+
+def plot_experimental_rates(
+    data: Array, *, ax: Axes | None = None
+) -> tuple[Figure, Axes, ErrorbarContainer]:
+    """Plot measured rates (columns T, rate, low, high) with their ranges against 1000 / T."""
+    fig, ax = get_figure(ax)
+    t, r, lo, hi = np.asarray(data).T
+    container = ax.errorbar(
+        1000 / t, r, yerr=[r - lo, hi - r], linestyle="", marker="o", markersize=4
+    )
+    set_arrhenius_axes(ax)
+    return fig, ax, container

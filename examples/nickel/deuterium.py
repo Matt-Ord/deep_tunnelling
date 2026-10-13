@@ -9,19 +9,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-from experiment import D_RATES, implied_fast_rates, plot_experimental_rates
-from hydrogen import fit_hydrogen
-from util import build_bands
 
 from deep_tunnelling.model import RateCurve, rates
 from deep_tunnelling.plot import (
     CAM_BLUE,
     CAM_CHERRY,
     get_fancy_figure,
+    plot_experimental_rates,
     plot_rate_arrhenius,
 )
 from deep_tunnelling.units import M_D, M_H
 from deep_tunnelling.util import cache_base_path, cached
+from examples.nickel.experiment import D_RATES, implied_fast_rates
+from examples.nickel.hydrogen import fit_hydrogen
+from examples.nickel.util import MAX_WORKERS, NICKEL, PES
 
 if TYPE_CHECKING:
     from deep_tunnelling.ume import Friction
@@ -29,14 +30,14 @@ if TYPE_CHECKING:
 TEMPERATURES = np.linspace(115.0, 260.0, 8)
 
 
-@cached(
-    lambda friction, *, optimized: Path(
-        f"deuterium.{'optimized' if optimized else 'dft'}.{friction.gamma:.6f}.pkl"
-    )
-)
-def solve_deuterium(friction: Friction, *, optimized: bool) -> RateCurve:
+@cached(lambda scale, friction: Path(f"deuterium.{scale:.4f}.{friction.gamma:.6f}.pkl"))
+def solve_deuterium(scale: float, friction: Friction) -> RateCurve:
     (curve,) = rates(
-        build_bands(M_D, optimized=optimized), M_D, TEMPERATURES, [friction]
+        NICKEL.bands(M_D, scale),
+        M_D,
+        TEMPERATURES,
+        [friction],
+        max_workers=MAX_WORKERS["D"],
     )
     return curve
 
@@ -56,14 +57,13 @@ def _main() -> None:
         for artist in points.lines[0], *points.lines[2]:
             artist.set_color(color)
     points.lines[0].set_markerfacecolor("none")  # fast rates: open circles
-    for name, optimized, color in (
-        ("DFT", False, CAM_BLUE.dark),
-        ("optimized", True, CAM_BLUE.warm),
+    for (name, scale), color in zip(
+        PES.items(), (CAM_BLUE.dark, CAM_BLUE.warm), strict=True
     ):
         # same eta = m gamma as the H fit on this PES
-        friction = fit_hydrogen(optimized=optimized).curve.friction.scaled(M_H / M_D)
+        friction = fit_hydrogen(scale).curve.friction.scaled(M_H / M_D)
         print(f"D, {name} PES: gamma = {friction.gamma:.3f} ps^-1 (same eta as H)")
-        curve = solve_deuterium(friction, optimized=optimized)
+        curve = solve_deuterium(scale, friction)
         _, _, slow = plot_rate_arrhenius(curve.temperatures, curve.slow, ax=ax)
         slow.set(
             color=color,
@@ -73,9 +73,9 @@ def _main() -> None:
         fast.set(color=color, linestyle="--")
     ax.legend(loc="lower left", fontsize=6)
     ax.set_title("D/Ni(111), same $\\eta$ as H (solid: slow, dashed: fast)", fontsize=9)
-    fig.savefig("examples/deuterium.rates.pdf")
+    fig.savefig("examples/nickel/deuterium.rates.pdf")
 
 
 if __name__ == "__main__":
-    with cache_base_path(Path("examples/data")):
+    with cache_base_path(Path("examples/nickel/data")):
         _main()

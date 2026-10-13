@@ -1,4 +1,4 @@
-"""Universal Caldeira-Leggett master equation for H on Ni(111) in a Bloch basis.
+"""Universal Caldeira-Leggett master equation for H on a metal surface in a Bloch basis.
 
 System-bath coupling (periodic Caldeira-Leggett, thesis Ch. 6, extended to 2D):
 for each of the three 120-degree directions q_j = (b1, b2, -b1-b2) / n of the
@@ -82,24 +82,38 @@ class Channel:
     periodic: bool = True  # an in-plane e^{+-i q.r} / q coupling, False for z
 
 
+# site labels of the eigenstates
+FCC, HCP, TOP = 0, 1, 2
+
+
 @dataclass
 class BandData:
     """Bloch eigenstates on an n x n k grid and all coupling matrix elements."""
 
     energies: Array  # (nk, n_big)
-    fcc_projector: Array  # (nk, n_big, n_big)
+    # (nk, n_big): FCC, HCP or TOP, the site nearest most of each eigenstate's weight
+    sites: Array
     channels: list[Channel]
 
     @classmethod
     def build(cls, solver: BlochSolver, n: int) -> BandData:
-        """Diagonalize every k point of the n x n grid and build all coupling channels."""
+        """Diagonalize every k point of the n x n grid and build all coupling channels.
+
+        Each eigenstate counts wholly towards the site (fcc, hcp or top) nearest
+        most of its weight, so populations are diagonal in the eigenbasis. This
+        keeps the tail of the fcc ground state beyond the fcc/hcp midline out of
+        the hcp population, and states on the top site out of both.
+        """
         kpoints = k_grid(n)
         solutions = [solver.eigenstates(k) for k in kpoints]
         energies = np.array([e for e, _ in solutions])
         states = [u.reshape(solver.n_states, -1) for _, u in solutions]
-        u, v, z = solver.grid.fractional()
-        fcc_mask = _fcc_mask(u, v).ravel()
-        projectors = [(uk.conj() * fcc_mask) @ uk.T for uk in states]
+        u, v, z = solver.grid.coordinates
+        nearest = _nearest_site(u, v).ravel()
+        weights = np.eye(3)[nearest]  # (grid, site)
+        sites = np.array(
+            [np.argmax(np.abs(uk) ** 2 @ weights, axis=1) for uk in states]
+        )
         channels = [
             *_momentum_channels(solver.grid, kpoints, states, n),
             *(
@@ -107,8 +121,9 @@ class BandData:
                 for i, uk in enumerate(states)
             ),
         ]
-        return cls(energies, np.array(projectors), channels)
+        return cls(energies, sites, channels)
 
+    @property
     def ground_state_channels(self) -> list[Channel]:
         """Project the periodic in-plane couplings onto the two ground bands."""
         mask = np.zeros(self.energies.shape[1:] * 2)
@@ -125,7 +140,7 @@ def _momentum_channels(
 ) -> list[Channel]:
     """Channels e^{+-i q.r} / q, weight 1/3 each, for the three directions q = d . b / n."""
     index = {k: i for i, k in enumerate(kpoints)}
-    u, v, _ = grid.fractional()
+    u, v, _ = grid.coordinates
     q_length = float(np.linalg.norm(grid.reciprocal[0])) / n
     channels = []
     for i, k in enumerate(kpoints):
@@ -144,48 +159,38 @@ def _momentum_channels(
     return channels
 
 
-def _fcc_mask(u: Array, v: Array) -> Array:
-    """1 where the in-plane point is closer to an fcc than an hcp hollow."""
+def _distance2(u: Array, v: Array, su: float, sv: float) -> Array:
+    """Squared distance (in units of a^2) to the nearest periodic image of site (su, sv)."""
+    best = np.full(np.shape(u), np.inf)
+    for du in (-1, 0, 1):
+        for dv in (-1, 0, 1):
+            fu, fv = u - su - du, v - sv - dv
+            best = np.minimum(best, (fu + 0.5 * fv) ** 2 + 0.75 * fv**2)
+    return best
 
-    def dist2(su: float, sv: float) -> Array:
-        best = np.full(u.shape, np.inf)
-        for du in (-1, 0, 1):
-            for dv in (-1, 0, 1):
-                fu, fv = u - su - du, v - sv - dv
-                best = np.minimum(best, (fu + 0.5 * fv) ** 2 + 0.75 * fv**2)
-        return best
 
-    return (dist2(1 / 3, 1 / 3) < dist2(2 / 3, 2 / 3)).astype(float)
+def _nearest_site(u: Array, v: Array) -> Array:
+    """FCC, HCP or TOP: the site nearest each in-plane point."""
+    sites = ((1 / 3, 1 / 3), (2 / 3, 2 / 3), (0, 0))  # in label order
+    return np.argmin([_distance2(u, v, *s) for s in sites], axis=0)
 
 
 @dataclass(frozen=True)
 class RateResult:
-    """Slowest Liouvillian eigenvalues and the steady-state fcc population at one friction."""
+    """fcc <-> hcp exchange at one friction: its rate and the steady-state hollow populations."""
 
-    eigenvalues: (
-        Array  # slowest few, sorted by -Re; eigenvalues[0] = 0 is the steady state
-    )
-    p_fcc: float
-
-    @property
-    def lambda1(self) -> complex:
-        """Slowest decay eigenvalue (ps^-1)."""
-        return complex(self.eigenvalues[1])
-
-    @property
-    def total_rate(self) -> float:
-        """k_fh + k_hf = -Re lambda_1 (ps^-1)."""
-        return -self.lambda1.real
+    exchange_rate: float  # k_fh + k_hf = -Re of the exchange eigenvalue (ps^-1)
+    fcc_fraction: float  # p_fcc / (p_fcc + p_hcp) in the steady state
 
     @property
     def fcc_escape_rate(self) -> float:
         """Total escape rate out of an fcc hollow (ps^-1); detailed balance k_fh p_f = k_hf p_h."""
-        return self.total_rate * (1 - self.p_fcc)
+        return self.exchange_rate * (1 - self.fcc_fraction)
 
     @property
     def hcp_escape_rate(self) -> float:
         """Total escape rate out of an hcp hollow (ps^-1)."""
-        return self.total_rate * self.p_fcc
+        return self.exchange_rate * self.fcc_fraction
 
 
 def _coherent(bands: BandData, n_rate: int) -> scipy.sparse.csr_matrix:
@@ -239,26 +244,58 @@ def _dissipator(
 
 
 def liouvillian_parts(
-    bands: BandData, mass: float, temperature: float, n_rate: int
-) -> tuple[scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, scipy.sparse.csr_matrix]:
-    """Split L = L0 + gamma L1 + gamma_g L_g; every bath term (S, Gamma, H_U, L^dag L) is linear in its friction."""
+    bands: BandData,
+    mass: float,
+    temperature: float,
+    n_rate: int,
+    *,
+    ground: bool = True,
+) -> tuple[
+    scipy.sparse.csr_matrix, scipy.sparse.csr_matrix, scipy.sparse.csr_matrix | None
+]:
+    """Split L = L0 + gamma L1 + gamma_g L_g; every bath term (S, Gamma, H_U, L^dag L) is linear in its friction.
+
+    L_g is None unless ground is set.
+    """
     bath = OhmicBath(mass, 1.0, temperature)
     return (
         _coherent(bands, n_rate),
         _dissipator(bands, bands.channels, bath, n_rate),
-        _dissipator(bands, bands.ground_state_channels(), bath, n_rate),
+        _dissipator(bands, bands.ground_state_channels, bath, n_rate)
+        if ground
+        else None,
     )
 
 
 def slowest_eigenvalues(
-    liouvillian: scipy.sparse.csr_matrix, n_eig: int = 4
+    liouvillian: scipy.sparse.csr_matrix, n_eig: int = 6
 ) -> tuple[Array, Array]:
-    """Eigenvalues closest to zero (sorted by -Re) and the stationary state, by shift-invert."""
+    """Eigenvalues closest to zero (sorted by -Re) and their right eigenvectors, by shift-invert."""
     w, vr = scipy.sparse.linalg.eigs(
         liouvillian.tocsc(), k=n_eig, sigma=1e-9, which="LM"
     )
     order = np.argsort(-w.real)
-    return w[order], vr[:, order[0]]
+    return w[order], vr[:, order]
+
+
+def _exchange_index(modes: Array, p: Array, sites: Array) -> int:
+    """Index (> 0) of the decay mode closest to fcc <-> hcp exchange.
+
+    This is usually the slowest, but a weakly coupled band can relax more slowly
+    still (the top-site states of H/Pt(111)). Exchange between the hollows, each
+    in internal equilibrium, changes the populations p by p_i / p_fcc on fcc
+    states and -p_i / p_hcp on hcp states; the mode whose population change is
+    most nearly parallel to this is chosen.
+    """
+    nk, n_rate = p.shape
+    on_fcc, on_hcp = sites == FCC, sites == HCP
+    pattern = p * (on_fcc / np.sum(p * on_fcc) - on_hcp / np.sum(p * on_hcp))
+    pattern /= np.linalg.norm(pattern)
+    overlaps = []
+    for j in range(1, modes.shape[1]):
+        change = np.einsum("kaa->ka", modes[:, j].reshape(nk, n_rate, n_rate))
+        overlaps.append(abs(np.vdot(pattern, change)) / np.linalg.norm(change))
+    return 1 + int(np.argmax(overlaps))
 
 
 def hop_rates(
@@ -269,17 +306,24 @@ def hop_rates(
     n_rate: int,
 ) -> list[RateResult]:
     """Hop rates for several frictions at one temperature, assembling the Liouvillian once."""
-    l0, l1, l_g = liouvillian_parts(bands, mass, temperature, n_rate)
+    ground = any(f.ground for f in frictions)
+    l0, l1, l_g = liouvillian_parts(bands, mass, temperature, n_rate, ground=ground)
     nk = bands.energies.shape[0]
-    projector = bands.fcc_projector[:, :n_rate, :n_rate]
+    sites = bands.sites[:, :n_rate]
     out = []
     for friction in frictions:
-        w, stationary = slowest_eigenvalues(
-            (l0 + friction.gamma * l1 + friction.ground * l_g).tocsr()
-        )
-        rho = stationary.reshape(nk, n_rate, n_rate)
-        rho /= np.trace(rho, axis1=1, axis2=2).sum()
+        liouvillian = l0 + friction.gamma * l1
+        if l_g is not None:
+            liouvillian += friction.ground * l_g
+        w, modes = slowest_eigenvalues(liouvillian.tocsr())
+        p = np.real(np.einsum("kaa->ka", modes[:, 0].reshape(nk, n_rate, n_rate)))
+        p /= p.sum()  # steady state, from the eigenvector of eigenvalue 0
+        exchange_idx = _exchange_index(modes, p, sites)
+        p_fcc, p_hcp = np.sum(p[sites == FCC]), np.sum(p[sites == HCP])
         out.append(
-            RateResult(w, float(np.real(np.einsum("kab,kba->", rho, projector))))
+            RateResult(
+                exchange_rate=float(-w[exchange_idx].real),
+                fcc_fraction=float(p_fcc / (p_fcc + p_hcp)),
+            )
         )
     return out

@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-from hydrogen_ground_friction import fit_hydrogen_ground
-from util import build_bands
 
 from deep_tunnelling.model import rates
 from deep_tunnelling.plot import (
@@ -20,6 +18,8 @@ from deep_tunnelling.plot import (
 )
 from deep_tunnelling.units import M_H
 from deep_tunnelling.util import cache_base_path, cached
+from examples.nickel.hydrogen_ground_friction import fit_hydrogen_ground
+from examples.nickel.util import MAX_WORKERS, NICKEL, OPTIMIZED_SCALE
 
 if TYPE_CHECKING:
     from deep_tunnelling.ume import Friction
@@ -41,9 +41,16 @@ class ConvergenceResult:
 
 @cached(Path("convergence.pkl"))
 def solve_convergence() -> ConvergenceResult:
-    friction = fit_hydrogen_ground(optimized=True).curve.friction
-    bands = [build_bands(M_H, n, optimized=True) for n in SIZES]
-    table = np.array([rates(b, M_H, TEMPERATURES, [friction])[0].slow for b in bands])
+    friction = fit_hydrogen_ground(OPTIMIZED_SCALE).curve.friction
+    bands = [NICKEL.bands(M_H, OPTIMIZED_SCALE, n) for n in SIZES]
+    table = np.array(
+        [
+            rates(b, M_H, TEMPERATURES, [friction], max_workers=MAX_WORKERS["H"])[
+                0
+            ].slow
+            for b in bands
+        ]
+    )
     return ConvergenceResult(
         friction=friction, sizes=SIZES, temperatures=TEMPERATURES, rates=table
     )
@@ -62,9 +69,9 @@ def _plot_convergence(result: ConvergenceResult) -> None:
         lines.append(line)
     ax.axhspan(0.99, 1.01, color="white", zorder=0)
     ax.legend(handles=lines)
-    fig.savefig("examples/convergence.pdf")
+    fig.savefig("examples/nickel/convergence.pdf")
 
 
 if __name__ == "__main__":
-    with cache_base_path(Path("examples/data")):
+    with cache_base_path(Path("examples/nickel/data")):
         _plot_convergence(solve_convergence())
