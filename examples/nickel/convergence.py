@@ -69,7 +69,7 @@ def _plot_convergence(result: ConvergenceResult) -> None:
         lines.append(line)
     ax.axhspan(0.99, 1.01, color="white", zorder=0)
     ax.legend(handles=lines)
-    fig.savefig("examples/nickel/convergence.pdf")
+    fig.savefig("examples/nickel/nickel.hydrogen.convergence.pdf")
 
 
 if __name__ == "__main__":

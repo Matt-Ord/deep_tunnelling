@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from deep_tunnelling.model import rates
 from deep_tunnelling.plot import (
+    CAM_BLUE,
     CAM_CHERRY,
     get_fancy_figure,
     plot_experimental_rates,
@@ -57,9 +58,10 @@ def _main() -> None:
     points.set_label("Jardine, D")
     for artist in points.lines[0], *points.lines[2]:
         artist.set_color(CAM_CHERRY.dark)
-    for name, scale, linestyle in (
-        ("corrected", corrected_scale(), "-"),
-        ("DFT", 1.0, "--"),
+    for (name, scale), color in zip(
+        (("DFT", 1.0), ("corrected", corrected_scale())),
+        (CAM_BLUE.dark, CAM_BLUE.warm),
+        strict=True,
     ):
         # same eta = m gamma as the H fit on this PES
         friction = fit_hydrogen(scale).curve.friction.scaled(M_H / M_D)
@@ -72,15 +74,14 @@ def _main() -> None:
         print_activation_energies("D", D_RATES, curve)
         _, _, line = plot_rate_arrhenius(curve.temperatures, jump_rate(curve), ax=ax)
         line.set(
-            color=CAM_CHERRY.warm,
-            linestyle=linestyle,
+            color=color,
             label=rf"{name} PES ({scale:.1f}), $\gamma = {friction.gamma:.2f}$"
             rf" ps$^{{-1}}$, $\chi^2 = {fit_chi2:.1f}$",
         )
     ax.set_ylabel(r"Hopping rate $\Gamma$ (ps$^{-1}$)")
     ax.legend(loc="lower left", fontsize=6)
-    ax.set_title(r"D/Pt(111), same $\eta$ as H", fontsize=9)
-    fig.savefig("examples/platinum/deuterium.rates.pdf")
+    ax.set_title(r"D/Pt(111), same $\eta$ as H (Chudley-Elliott rate)", fontsize=9)
+    fig.savefig("examples/platinum/platinum.deuterium.pdf")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from deep_tunnelling.plot import (
     CAM_BLUE,
+    CAM_CHERRY,
     get_fancy_figure,
     plot_experimental_rates,
     plot_rate_arrhenius,
@@ -67,10 +68,11 @@ def _main() -> None:
     _, _, points = plot_experimental_rates(H_RATES, ax=ax)
     points.set_label("Jardine, H")
     for artist in points.lines[0], *points.lines[2]:
-        artist.set_color(CAM_BLUE.dark)
-    for name, scale, linestyle in (
-        ("corrected", corrected_scale(), "-"),
-        ("DFT", 1.0, "--"),
+        artist.set_color(CAM_CHERRY.dark)
+    for (name, scale), color in zip(
+        (("DFT", 1.0), ("corrected", corrected_scale())),
+        (CAM_BLUE.dark, CAM_BLUE.warm),
+        strict=True,
     ):
         fit = fit_hydrogen(scale)
         print(f"{name} PES (splitting_scale {scale:.2f}):")
@@ -79,15 +81,14 @@ def _main() -> None:
             fit.curve.temperatures, jump_rate(fit.curve), ax=ax
         )
         line.set(
-            color=CAM_BLUE.warm,
-            linestyle=linestyle,
+            color=color,
             label=rf"{name} PES ({scale:.1f}), $\gamma = {fit.curve.friction.gamma:.2f}$"
             rf" ps$^{{-1}}$, $\chi^2 = {fit.chi2:.1f}$",
         )
     ax.set_ylabel(r"Hopping rate $\Gamma$ (ps$^{-1}$)")
     ax.legend(loc="lower left", fontsize=6)
-    ax.set_title("H/Pt(111), single friction", fontsize=9)
-    fig.savefig("examples/platinum/hydrogen.rates.pdf")
+    ax.set_title("H/Pt(111), single friction (Chudley-Elliott rate)", fontsize=9)
+    fig.savefig("examples/platinum/platinum.hydrogen.pdf")
 
 
 if __name__ == "__main__":

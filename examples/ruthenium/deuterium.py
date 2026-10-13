@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from deep_tunnelling.model import rates
-from deep_tunnelling.plot import get_fancy_figure
+from deep_tunnelling.plot import (
+    CAM_BLUE,
+    CAM_CHERRY,
+    get_fancy_figure,
+    plot_experimental_rates,
+    plot_rate_arrhenius,
+)
 from deep_tunnelling.units import M_D, M_H
 from deep_tunnelling.util import cache_base_path, cached
 from examples.ruthenium.experiment import D_RATES
@@ -24,10 +30,7 @@ from examples.ruthenium.util import (
     print_activation_energy,
 )
 from examples.util import (
-    PES_COLORS,
     chi2,
-    plot_slow_fast_curve,
-    plot_slow_fast_data,
 )
 
 if TYPE_CHECKING:
@@ -54,8 +57,14 @@ def solve_deuterium(scale: float, friction: Friction) -> RateCurve:
 
 def _main() -> None:
     fig, ax = get_fancy_figure()
-    plot_slow_fast_data(ax, None, (D_RATES, "Townsend, fast"))
-    for (name, scale), color in zip(PES.items(), PES_COLORS, strict=True):
+    _, _, points = plot_experimental_rates(D_RATES, ax=ax)
+    points.set_label("Townsend, fast")
+    for artist in points.lines[0], *points.lines[2]:
+        artist.set_color(CAM_CHERRY.warm)
+    points.lines[0].set_markerfacecolor("none")  # fast rates: open circles
+    for (name, scale), color in zip(
+        PES.items(), (CAM_BLUE.dark, CAM_BLUE.warm), strict=True
+    ):
         # same eta = m gamma as the H fit on this PES
         friction = fit_hydrogen(scale).curve.friction.scaled(M_H / M_D)
         curve = solve_deuterium(scale, friction)
@@ -65,19 +74,20 @@ def _main() -> None:
             f"{friction.gamma:.3f} ps^-1 (same eta as H), chi2 = {fit_chi2:.2f}"
         )
         print_activation_energy("D", D_RATES, curve)
-        plot_slow_fast_curve(
-            ax,
-            curve,
-            color,
-            rf"{name} PES, $\gamma = {friction.gamma:.2f}$ ps$^{{-1}}$, "
+        _, _, slow = plot_rate_arrhenius(curve.temperatures, curve.slow, ax=ax)
+        slow.set(
+            color=color,
+            label=rf"{name} PES, $\gamma = {friction.gamma:.2f}$ ps$^{{-1}}$, "
             rf"$\chi^2 = {fit_chi2:.1f}$ (fast)",
         )
+        _, _, fast = plot_rate_arrhenius(curve.temperatures, curve.fast, ax=ax)
+        fast.set(color=color, linestyle="--")
     ax.set_ylabel(r"Escape rate (ps$^{-1}$)")
     ax.legend(loc="lower left", fontsize=6)
     ax.set_title(
         r"D/Ru(0001), same $\eta$ as H (solid: slow, dashed: fast)", fontsize=9
     )
-    fig.savefig("examples/ruthenium/deuterium.rates.pdf")
+    fig.savefig("examples/ruthenium/ruthenium.deuterium.pdf")
 
 
 if __name__ == "__main__":

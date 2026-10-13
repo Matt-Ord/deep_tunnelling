@@ -12,12 +12,6 @@ import scipy.optimize
 
 from deep_tunnelling.bloch import BlochSolver
 from deep_tunnelling.model import rates
-from deep_tunnelling.plot import (
-    CAM_BLUE,
-    CAM_CHERRY,
-    plot_experimental_rates,
-    plot_rate_arrhenius,
-)
 from deep_tunnelling.potential import SurfacePotential, load_points
 from deep_tunnelling.ume import HCP, BandData, Friction
 from deep_tunnelling.units import KB
@@ -25,8 +19,6 @@ from deep_tunnelling.units import KB
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-    from matplotlib.axes import Axes
 
     from deep_tunnelling.bloch import Grid
     from deep_tunnelling.model import RateCurve
@@ -150,33 +142,3 @@ def activation_energy(
     """Return the slope (meV) of a (weighted) straight-line fit of ln rate against -1 / kT."""
     weights = None if sigma is None else 1 / sigma
     return float(np.polyfit(-1 / (KB * temperatures), np.log(rate), 1, w=weights)[0])
-
-
-# colours shared by the slow/fast rate plots: data in cherry (slow dark and filled,
-# fast light and open), one blue per PES (DFT dark, corrected light), and the model
-# rates solid (slow) and dashed (fast)
-PES_COLORS = (CAM_BLUE.dark, CAM_BLUE.warm)
-
-
-def plot_slow_fast_data(
-    ax: Axes, slow: tuple[Array, str] | None, fast: tuple[Array, str] | None
-) -> None:
-    """Plot measured slow (filled) and fast (open) escape rates, each with its label."""
-    for series, color in ((slow, CAM_CHERRY.dark), (fast, CAM_CHERRY.warm)):
-        if series is None:
-            continue
-        data, label = series
-        _, _, points = plot_experimental_rates(data, ax=ax)
-        points.set_label(label)
-        for artist in points.lines[0], *points.lines[2]:
-            artist.set_color(color)
-        if series is fast:
-            points.lines[0].set_markerfacecolor("none")
-
-
-def plot_slow_fast_curve(ax: Axes, curve: RateCurve, color: str, label: str) -> None:
-    """Plot a model's slow (solid, labelled) and fast (dashed) escape rates."""
-    _, _, slow = plot_rate_arrhenius(curve.temperatures, curve.slow, ax=ax)
-    slow.set(color=color, label=label)
-    _, _, fast = plot_rate_arrhenius(curve.temperatures, curve.fast, ax=ax)
-    fast.set(color=color, linestyle="--")

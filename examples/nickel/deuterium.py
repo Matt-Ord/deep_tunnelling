@@ -44,18 +44,14 @@ def solve_deuterium(scale: float, friction: Friction) -> RateCurve:
 
 def _main() -> None:
     fig, ax = get_fancy_figure()
-    for data, color, label in (
-        (D_RATES, CAM_CHERRY.dark, "Zhu, slow"),
-        (
-            implied_fast_rates(D_RATES),
-            CAM_CHERRY.warm,
-            r"Zhu, fast ($\times e^{\Delta E / k_B T}$)",
-        ),
-    ):
-        _, _, points = plot_experimental_rates(data, ax=ax)
-        points.set_label(label)
-        for artist in points.lines[0], *points.lines[2]:
-            artist.set_color(color)
+    _, _, points = plot_experimental_rates(D_RATES, ax=ax)
+    points.set_label("Zhu, slow")
+    for artist in points.lines[0], *points.lines[2]:
+        artist.set_color(CAM_CHERRY.dark)
+    _, _, points = plot_experimental_rates(implied_fast_rates(D_RATES), ax=ax)
+    points.set_label(r"Zhu, fast ($\times e^{\Delta E / k_B T}$)")
+    for artist in points.lines[0], *points.lines[2]:
+        artist.set_color(CAM_CHERRY.warm)
     points.lines[0].set_markerfacecolor("none")  # fast rates: open circles
     for (name, scale), color in zip(
         PES.items(), (CAM_BLUE.dark, CAM_BLUE.warm), strict=True
@@ -73,7 +69,7 @@ def _main() -> None:
         fast.set(color=color, linestyle="--")
     ax.legend(loc="lower left", fontsize=6)
     ax.set_title("D/Ni(111), same $\\eta$ as H (solid: slow, dashed: fast)", fontsize=9)
-    fig.savefig("examples/nickel/deuterium.rates.pdf")
+    fig.savefig("examples/nickel/nickel.deuterium.pdf")
 
 
 if __name__ == "__main__":
